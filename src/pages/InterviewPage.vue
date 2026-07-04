@@ -6,7 +6,7 @@
           <img class="brand-logo" :src="brandLogo" alt="奢享家" />
           <span>奢享家 HR 面试间</span>
         </div>
-        <button class="primary" :disabled="isCompleted" @click="enterInterview">
+        <button v-if="!showAccessInput" class="primary" :disabled="isCompleted || enteringInterview" @click="enterInterview">
           {{ isEntered ? '已进入面试' : '进入面试' }}
         </button>
       </div>
@@ -31,18 +31,25 @@
       </div>
 
       <div v-if="showAccessInput" class="access-panel">
-        <label>
-          面试口令
+        <div class="access-panel-title">
+          <b>输入面试口令</b>
+          <span>请输入 HR 提供的 6 位数字口令</span>
+        </div>
+        <label class="access-code-field">
           <input
             v-model="accessCode"
-            type="password"
-            maxlength="32"
+            type="tel"
+            maxlength="6"
             autocomplete="one-time-code"
-            inputmode="text"
-            placeholder="请输入 HR 提供的面试口令"
+            inputmode="numeric"
+            pattern="[0-9]*"
+            placeholder="请输入口令"
             @keyup.enter="enterInterview"
           />
         </label>
+        <button class="primary access-submit" :disabled="!normalizedAccessCode || isCompleted || enteringInterview" @click="enterInterview">
+          {{ enteringInterview ? '进入中' : '进入面试' }}
+        </button>
       </div>
 
       <div class="conversation">
@@ -50,7 +57,7 @@
           <b>面试对话</b>
           <span>{{ realtimeHint }}</span>
         </div>
-        <div class="bubble ai">你好，我是本次 AI 面试官。进入面试后，我会根据岗位和简历进行提问。</div>
+        <div v-if="!realtimeMessages.length" class="bubble ai">你好，我是本次 AI 面试官。进入面试后，我会根据岗位和简历进行提问。</div>
         <div v-for="message in realtimeMessages" :key="message.id" :class="['bubble', message.role]">
           {{ message.content }}
         </div>
@@ -74,11 +81,20 @@
       </div>
       <audio ref="remoteAudio" autoplay></audio>
     </section>
+    <div v-if="isQueueing" class="interview-queue-mask">
+      <section class="interview-queue-modal">
+        <div class="queue-spinner" aria-hidden="true"></div>
+        <h2>实时语音正在排队</h2>
+        <p>当前同时面试人数较多，系统会每 5 秒自动尝试连接一次。请保持页面打开，不需要重复刷新。</p>
+        <span>{{ queueRetryText }}</span>
+        <button type="button" @click="finishInterview">结束面试</button>
+      </section>
+    </div>
   </main>
 </template>
 
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { publicInterviewApi } from '../api/hr'
 import { showError, showSuccess } from '../utils/message'
@@ -104,18 +120,31 @@ const currentUserMessageId = ref(null)
 const currentAiMessageId = ref(null)
 const hasAiChatResponseInTurn = ref(false)
 const realtimeHeartbeatTimer = ref(null)
+const realtimeReconnectTimer = ref(null)
+const historySyncTimers = ref([])
+const queueCountdownTimer = ref(null)
+const queueRetrySeconds = ref(0)
+const realtimeReconnectAttempts = ref(0)
+const reconnectingAutomatically = ref(false)
+const isQueueing = ref(false)
 const manualRealtimeClosing = ref(false)
 const lastRealtimeError = ref('')
+const MAX_REALTIME_RECONNECTS = 3
+const REALTIME_RECONNECT_DELAY = 2000
+const REALTIME_QUEUE_RETRY_DELAY = 5000
+const accessCodeStorageKey = `interview-access-code:${token}`
+const enteringInterview = ref(false)
 
 const isEntered = computed(() => interview.value?.status === 'IN_PROGRESS')
-const isCompleted = computed(() => interview.value?.status === 'COMPLETED')
+const isCompleted = computed(() => ['GENERATING', 'COMPLETED', 'FAILED'].includes(interview.value?.status))
 const normalizedAccessCode = computed(() => accessCode.value.trim())
-const showAccessInput = computed(() => !isCompleted.value && !isEntered.value)
+const showAccessInput = computed(() => !isCompleted.value && (!isEntered.value || !normalizedAccessCode.value))
 const interviewStatusText = computed(() => {
   const map = {
     INVITED: '已邀请',
     WAITING: '等待中',
     IN_PROGRESS: '面试中',
+    GENERATING: '报告生成中',
     COMPLETED: '已完成',
     FAILED: '失败'
   }
@@ -127,26 +156,60 @@ const realtimeStatusText = computed(() => {
     connecting: '连接中',
     connected: '已连接',
     disconnected: '已断开',
-    failed: '连接失败'
+    failed: '连接失败',
+    queueing: '排队中'
   }
   return map[realtimeStatus.value] || '未连接'
 })
-const realtimeButtonText = computed(() => realtimeStatus.value === 'connected' ? '重新连接实时语音' : '连接实时语音')
+const realtimeButtonText = computed(() => {
+  if (realtimeStatus.value === 'connected') return '重新连接实时语音'
+  if (isQueueing.value) return '继续排队'
+  return '连接实时语音'
+})
+const queueRetryText = computed(() => queueRetrySeconds.value > 0
+  ? `${queueRetrySeconds.value} 秒后自动重试`
+  : '正在尝试连接')
 const realtimeHint = computed(() => {
   if (!isEntered.value) return '输入口令进入面试后，可以连接实时语音通道。'
   if (realtimeStatus.value === 'connected') return '实时语音已连接，直接开口回答即可。'
-  if (realtimeStatus.value === 'connecting') return '正在连接实时语音通道，请稍候。'
+  if (isQueueing.value || realtimeStatus.value === 'queueing') return '当前在线面试人数较多，正在排队等待实时语音通道。'
+  if (realtimeStatus.value === 'connecting') return reconnectingAutomatically.value ? '实时语音断开了，正在自动重连。' : '正在连接实时语音通道，请稍候。'
   if (realtimeStatus.value === 'failed') return lastRealtimeError.value || '实时语音连接失败，请稍后重试。'
   if (realtimeStatus.value === 'disconnected') return lastRealtimeError.value || '实时语音已断开，请点击重新连接。'
   return '点击连接实时语音后，会开启麦克风并接入火山端到端实时语音。'
 })
 
-onMounted(reload)
-onBeforeUnmount(disconnectRealtime)
+onMounted(async () => {
+  accessCode.value = window.sessionStorage.getItem(accessCodeStorageKey) || ''
+  await reload()
+  if (isEntered.value && normalizedAccessCode.value) {
+    await loadHistoryMessages()
+  }
+})
+onBeforeUnmount(() => {
+  clearRealtimeReconnectTimer()
+  clearHistorySyncTimers()
+  clearQueueCountdownTimer()
+  disconnectRealtime()
+})
+
+watch(accessCode, value => {
+  const normalized = String(value || '').replace(/\D/g, '').slice(0, 6)
+  if (normalized !== value) {
+    accessCode.value = normalized
+    return
+  }
+  if (showAccessInput.value && normalized.length === 6 && !enteringInterview.value) {
+    enterInterview()
+  }
+})
 
 async function reload() {
   try {
     interview.value = await publicInterviewApi.detail({ token })
+    if (isEntered.value && normalizedAccessCode.value) {
+      await loadHistoryMessages()
+    }
   } catch (err) {
   }
 }
@@ -157,12 +220,20 @@ async function enterInterview() {
     showError('请输入面试口令')
     return
   }
+  if (enteringInterview.value) {
+    return
+  }
+  enteringInterview.value = true
   try {
     await unlockMobileAudio()
     interview.value = await publicInterviewApi.enter({ token, accessCode: code })
     accessCode.value = code
+    window.sessionStorage.setItem(accessCodeStorageKey, code)
+    await loadHistoryMessages()
     showSuccess('已进入面试')
   } catch (err) {
+  } finally {
+    enteringInterview.value = false
   }
 }
 
@@ -174,13 +245,87 @@ async function finishInterview() {
   }
   try {
     disconnectRealtime()
+    await loadHistoryMessages()
     interview.value = await publicInterviewApi.finish({ token, accessCode: code })
+    window.sessionStorage.removeItem(accessCodeStorageKey)
     showSuccess('面试已结束')
   } catch (err) {
   }
 }
 
-async function connectRealtime() {
+async function loadHistoryMessages() {
+  const code = normalizedAccessCode.value
+  if (!code) return
+  try {
+    const messages = await publicInterviewApi.messages({ token, accessCode: code })
+    mergeHistoryMessages(messages)
+  } catch (err) {
+  }
+}
+
+function syncHistoryMessages() {
+  clearHistorySyncTimers()
+  loadHistoryMessages()
+  if (isQueueing.value || realtimeStatus.value === 'queueing') {
+    return
+  }
+  ;[800, 2000].forEach(delay => {
+    const timer = window.setTimeout(() => {
+      loadHistoryMessages()
+    }, delay)
+    historySyncTimers.value.push(timer)
+  })
+}
+
+function clearHistorySyncTimers() {
+  historySyncTimers.value.forEach(timer => window.clearTimeout(timer))
+  historySyncTimers.value = []
+}
+
+function mergeHistoryMessages(messages) {
+  if (!Array.isArray(messages)) {
+    return
+  }
+  const historyMessages = messages
+    .filter(item => item?.content)
+    .map(toRealtimeHistoryMessage)
+  if (!historyMessages.length) {
+    return
+  }
+  const merged = []
+  const seenIds = new Set()
+  const seenContent = new Set()
+  ;[...historyMessages, ...realtimeMessages.value].forEach(message => {
+    if (!message?.content) {
+      return
+    }
+    const stableId = message.id ? String(message.id) : ''
+    const contentKey = `${message.role}:${normalizeMessageText(message.content)}`
+    const isHistoryMessage = stableId.startsWith('history-')
+    if ((isHistoryMessage && seenIds.has(stableId)) || (!isHistoryMessage && seenContent.has(contentKey))) {
+      return
+    }
+    if (isHistoryMessage) {
+      seenIds.add(stableId)
+    } else {
+      seenContent.add(contentKey)
+    }
+    merged.push(message)
+  })
+  realtimeMessages.value = merged
+}
+
+function toRealtimeHistoryMessage(item) {
+  return {
+    id: `history-${item.id || item.sequenceNo}`,
+    role: item.role === 'CANDIDATE' ? 'user' : 'ai',
+    content: normalizeMessageText(item.content),
+    sequenceNo: item.sequenceNo || 0,
+    createdAt: item.createdAt || ''
+  }
+}
+
+async function connectRealtime(autoReconnect = false) {
   if (!isEntered.value) {
     showError('请先进入面试')
     return
@@ -190,12 +335,23 @@ async function connectRealtime() {
     showError('请输入面试口令')
     return
   }
+  if (!autoReconnect) {
+    realtimeReconnectAttempts.value = 0
+    reconnectingAutomatically.value = false
+    isQueueing.value = false
+    clearQueueCountdownTimer()
+  }
+  if (!autoReconnect && !isQueueing.value) {
+    await loadHistoryMessages()
+  }
+  clearRealtimeReconnectTimer()
   await unlockMobileAudio()
-  disconnectRealtime(true, false)
+  const wasQueueing = isQueueing.value || realtimeStatus.value === 'queueing'
+  disconnectRealtime(!wasQueueing, false)
   lastRealtimeError.value = ''
   manualRealtimeClosing.value = false
   realtimeConnecting.value = true
-  realtimeStatus.value = 'connecting'
+  realtimeStatus.value = wasQueueing ? 'queueing' : 'connecting'
   let microphoneReady = false
   try {
     await prepareMicrophoneCapture()
@@ -209,7 +365,12 @@ async function connectRealtime() {
     realtimeSocket.value = socket
     socket.onopen = () => {
       realtimeStatus.value = 'connected'
-      showSuccess('实时语音已连接')
+      reconnectingAutomatically.value = false
+      isQueueing.value = false
+      clearQueueCountdownTimer()
+      realtimeReconnectAttempts.value = 0
+      syncHistoryMessages()
+      showSuccess(autoReconnect ? '实时语音已恢复' : '实时语音已连接')
       startRealtimeHeartbeat()
       bindMicrophoneToRealtimeSocket()
     }
@@ -226,23 +387,40 @@ async function connectRealtime() {
         manualRealtimeClosing.value = false
         return
       }
+      if (isQueueing.value || realtimeStatus.value === 'queueing') {
+        return
+      }
       if (realtimeStatus.value !== 'failed') {
         realtimeStatus.value = 'disconnected'
       }
       const reason = event.reason ? `，原因：${event.reason}` : ''
       lastRealtimeError.value = `实时语音已断开，请点击重新连接。关闭码：${event.code}${reason}`
+      if (!isQueueing.value && realtimeStatus.value !== 'queueing') {
+        syncHistoryMessages()
+      }
+      scheduleRealtimeReconnect()
     }
   } catch (err) {
+    if (err?.code === 429001) {
+      handleRealtimeQueueing()
+      return
+    }
     realtimeStatus.value = 'failed'
     lastRealtimeError.value = microphoneReady ? '实时语音连接失败，请检查网络后重新连接' : getMicrophoneErrorMessage(err)
-    showError(lastRealtimeError.value)
+    if (!autoReconnect) {
+      showError(lastRealtimeError.value)
+    }
     disconnectRealtime(false)
+    if (microphoneReady) {
+      scheduleRealtimeReconnect()
+    }
   } finally {
     realtimeConnecting.value = false
   }
 }
 
 function disconnectRealtime(resetStatus = true, sendFinish = true) {
+  clearRealtimeReconnectTimer()
   stopRealtimeHeartbeat()
   stopMicrophoneCapture()
   currentUserMessageId.value = null
@@ -261,8 +439,72 @@ function disconnectRealtime(resetStatus = true, sendFinish = true) {
   }
   if (resetStatus) {
     realtimeStatus.value = 'idle'
+    isQueueing.value = false
+    clearQueueCountdownTimer()
     lastRealtimeError.value = ''
   }
+}
+
+function handleRealtimeQueueing() {
+  isQueueing.value = true
+  reconnectingAutomatically.value = true
+  realtimeStatus.value = 'queueing'
+  realtimeConnecting.value = false
+  lastRealtimeError.value = '实时语音正在排队，请保持页面打开，系统会自动重试连接。'
+  stopMicrophoneCapture()
+  clearHistorySyncTimers()
+  scheduleRealtimeReconnect(REALTIME_QUEUE_RETRY_DELAY, true)
+}
+
+function scheduleRealtimeReconnect(delay = REALTIME_RECONNECT_DELAY, queueing = false) {
+  if (!isEntered.value || isCompleted.value || !normalizedAccessCode.value || manualRealtimeClosing.value) {
+    return
+  }
+  if (!queueing && realtimeReconnectAttempts.value >= MAX_REALTIME_RECONNECTS) {
+    reconnectingAutomatically.value = false
+    lastRealtimeError.value = '实时语音已断开，自动重连失败，请点击“连接实时语音”重新进入。'
+    showError(lastRealtimeError.value)
+    return
+  }
+  clearRealtimeReconnectTimer()
+  if (!queueing) {
+    realtimeReconnectAttempts.value += 1
+  }
+  reconnectingAutomatically.value = true
+  realtimeStatus.value = queueing ? 'queueing' : 'connecting'
+  lastRealtimeError.value = queueing
+    ? '实时语音正在排队，请保持页面打开，系统会自动重试连接。'
+    : `实时语音断开，正在第 ${realtimeReconnectAttempts.value} 次自动重连。`
+  if (queueing) {
+    startQueueCountdown(delay)
+  }
+  realtimeReconnectTimer.value = window.setTimeout(() => {
+    clearQueueCountdownTimer()
+    connectRealtime(true)
+  }, delay)
+}
+
+function clearRealtimeReconnectTimer() {
+  if (realtimeReconnectTimer.value) {
+    window.clearTimeout(realtimeReconnectTimer.value)
+    realtimeReconnectTimer.value = null
+  }
+}
+
+function startQueueCountdown(delay) {
+  clearQueueCountdownTimer()
+  queueRetrySeconds.value = Math.max(1, Math.ceil(delay / 1000))
+  queueCountdownTimer.value = window.setInterval(() => {
+    queueRetrySeconds.value = Math.max(0, queueRetrySeconds.value - 1)
+  }, 1000)
+}
+
+function clearQueueCountdownTimer() {
+  if (queueCountdownTimer.value) {
+    window.clearInterval(queueCountdownTimer.value)
+    queueCountdownTimer.value = null
+  }
+  queueRetrySeconds.value = 0
 }
 
 function startRealtimeHeartbeat() {
@@ -359,6 +601,10 @@ function appendRealtimeText(text) {
     const raw = payload.payload ? JSON.parse(payload.payload) : payload
     const content = extractRealtimeContent(payload.event, raw, payload.message)
     if (payload.event === 'error' || payload.event === 'dialog_error') {
+      if (payload.code === 429001 || raw?.code === 429001) {
+        handleRealtimeQueueing()
+        return
+      }
       realtimeStatus.value = 'failed'
       lastRealtimeError.value = content || 'Realtime 模型返回异常'
       showError(lastRealtimeError.value)

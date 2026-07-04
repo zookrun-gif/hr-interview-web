@@ -1,7 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import DashboardPage from '../pages/DashboardPage.vue'
 import InterviewPage from '../pages/InterviewPage.vue'
-import InterviewResultsPage from '../pages/InterviewResultsPage.vue'
 import LoginPage from '../pages/LoginPage.vue'
 import WeComCallbackPage from '../pages/WeComCallbackPage.vue'
 
@@ -28,12 +27,6 @@ const router = createRouter({
       path: '/interview/:token',
       name: 'interview',
       component: InterviewPage
-    },
-    {
-      path: '/hr/interview-results',
-      name: 'interviewResults',
-      component: InterviewResultsPage,
-      meta: { requiresAuth: true }
     }
   ]
 })

@@ -43,6 +43,7 @@ export const publicInterviewApi = {
   detail: data => post('/api/public/interviews/detail', data),
   enter: data => post('/api/public/interviews/enter', data),
   finish: data => post('/api/public/interviews/finish', data),
+  messages: data => post('/api/public/interviews/messages/list', data),
   connectRealtime: data => post('/api/public/interviews/realtime/connect', data)
 }
 

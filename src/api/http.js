@@ -7,10 +7,11 @@ const http = axios.create({
 })
 
 class HandledApiError extends Error {
-  constructor(message) {
+  constructor(message, code) {
     super(message)
     this.name = 'HandledApiError'
     this.handled = true
+    this.code = code
   }
 }
 
@@ -44,8 +45,10 @@ async function requestPost(url, data = {}, config = {}) {
         clearLogin()
       }
       const message = body.message || '请求失败'
-      showError(message)
-      throw new HandledApiError(message)
+      if (body.code !== 429001) {
+        showError(message)
+      }
+      throw new HandledApiError(message, body.code)
     }
     return body ? body.data : null
   } catch (err) {

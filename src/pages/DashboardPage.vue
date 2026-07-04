@@ -11,18 +11,13 @@
     </aside>
 
     <main class="main admin-main">
-      <header class="admin-topbar">
-        <div class="topbar-title">
-          <b>{{ activeTabTitle }}</b>
-          <small>{{ activeTabDesc }}</small>
-        </div>
-        <div class="topbar-actions">
-          <span class="avatar">{{ userInitial }}</span>
-          <span class="user-name">{{ currentUser?.name || '管理员' }}</span>
-          <button @click="openPasswordModal">修改密码</button>
-          <button class="danger" @click="logout">退出登录</button>
-        </div>
-      </header>
+      <AdminPageHeader
+        :title="activeTabTitle"
+        :description="activeTabDesc"
+        :icon="activeTabIcon"
+        :user="currentUser"
+        @logout="logout"
+      />
 
       <section v-show="activeTab === 'jobs'" class="admin-page">
         <section class="query-panel">
@@ -208,7 +203,9 @@
                 <option value="INVITED">已邀请</option>
                 <option value="WAITING">等待中</option>
                 <option value="IN_PROGRESS">面试中</option>
+                <option value="GENERATING">报告生成中</option>
                 <option value="COMPLETED">已完成</option>
+                <option value="FAILED">失败</option>
               </select>
             </label>
             <div class="query-actions">
@@ -591,33 +588,6 @@
       </section>
     </div>
 
-    <div v-if="showPasswordModal" class="modal-mask">
-      <section class="modal-panel small">
-        <div class="modal-header">
-          <h2>修改密码</h2>
-          <button class="icon-button" @click="closePasswordModal">×</button>
-        </div>
-        <form class="form-grid" @submit.prevent="changePassword">
-          <label>
-            原密码
-            <input v-model="passwordForm.oldPassword" type="password" placeholder="请输入原密码" />
-          </label>
-          <label>
-            新密码
-            <input v-model="passwordForm.newPassword" type="password" placeholder="至少 8 位" />
-          </label>
-          <label>
-            确认新密码
-            <input v-model="passwordForm.confirmPassword" type="password" placeholder="再次输入新密码" />
-          </label>
-          <div class="modal-actions">
-            <button type="button" :disabled="saving" @click="closePasswordModal">取消</button>
-            <button class="primary" type="submit" :disabled="saving">{{ saving ? '处理中' : '保存' }}</button>
-          </div>
-        </form>
-      </section>
-    </div>
-
     <div v-if="inviteModal" class="modal-mask">
       <section class="modal-panel small">
         <div class="modal-header">
@@ -704,10 +674,19 @@
           <h2>面试对话记录</h2>
           <button class="icon-button" @click="closeMessagesModal">×</button>
         </div>
-        <div class="message-list">
-          <div v-for="message in messageRecords" :key="message.id" class="message-record">
-            <b>{{ message.role === 'CANDIDATE' ? '候选人' : 'AI 面试官' }}</b>
-            <p>{{ message.content }}</p>
+        <div class="message-list chat-message-list">
+          <div
+            v-for="message in messageRecords"
+            :key="message.id || message.sequenceNo"
+            :class="['chat-message', { candidate: message.role === 'CANDIDATE' }]"
+          >
+            <div class="chat-message-meta">
+              <b>{{ message.role === 'CANDIDATE' ? '候选人' : 'AI 面试官' }}</b>
+              <span>{{ formatTime(message.createdAt) }}</span>
+            </div>
+            <div class="chat-message-bubble">
+              {{ message.content }}
+            </div>
           </div>
           <div v-if="messageRecords.length === 0" class="empty-row">暂无对话记录</div>
         </div>
@@ -918,15 +897,16 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { BarChart3, BriefcaseBusiness, IdCard, ShieldCheck, SquareMenu, UserRoundCog, UsersRound, Video } from '@lucide/vue'
+import { BriefcaseBusiness, IdCard, ShieldCheck, SquareMenu, UserRoundCog, UsersRound, Video } from '@lucide/vue'
 import { authApi, candidateApi, interviewApi, jobApi, rbacApi } from '../api/hr'
+import AdminPageHeader from '../components/AdminPageHeader.vue'
 import AppMenu from '../components/AppMenu.vue'
 import RichTextEditor from '../components/RichTextEditor.vue'
 import { showError, showSuccess } from '../utils/message'
 import brandLogo from '../assets/shexiangjia-logo.png'
 
-const router = useRouter()
 const activeTab = ref('jobs')
+const router = useRouter()
 const systemMenuOpen = ref(false)
 const jobs = ref([])
 const candidates = ref([])
@@ -940,7 +920,6 @@ const jobOptions = ref([])
 const candidateOptions = ref([])
 const currentUser = ref(readCurrentUser())
 const createModal = ref('')
-const showPasswordModal = ref(false)
 const inviteModal = ref(false)
 const resumePreviewModal = ref(false)
 const jobPreviewModal = ref(false)
@@ -1031,12 +1010,6 @@ const inviteInfo = reactive({
   accessCode: ''
 })
 
-const passwordForm = reactive({
-  oldPassword: '',
-  newPassword: '',
-  confirmPassword: ''
-})
-
 const roleForm = reactive({
   code: '',
   name: '',
@@ -1071,11 +1044,6 @@ const resetPasswordForm = reactive({
 
 const locationOrigin = window.location.origin
 
-const userInitial = computed(() => {
-  const name = currentUser.value?.name || '管'
-  return name.slice(0, 1)
-})
-
 const createModalTitle = computed(() => {
   if (createModal.value === 'jobs') return editingJobId.value ? '编辑岗位' : '新增岗位'
   if (createModal.value === 'candidates') return editingCandidateId.value ? '编辑候选人' : '新增候选人'
@@ -1109,7 +1077,6 @@ const menuItems = computed(() => {
   }
   if (hasPermission('menu:interviews')) {
     items.push({ key: 'interviews', label: '面试管理', icon: Video, active: activeTab.value === 'interviews' })
-    items.push({ key: 'interviewResults', label: '面试结果', icon: BarChart3, active: false })
   }
   const rbacChildren = [
     hasPermission('menu:rbac:menus')
@@ -1155,6 +1122,17 @@ const activeTabDesc = computed(() => {
     rbacUsers: '维护用户与角色的绑定关系'
   }
   return map[activeTab.value] || '奢享家 HR 管理系统'
+})
+const activeTabIcon = computed(() => {
+  const map = {
+    jobs: BriefcaseBusiness,
+    candidates: UsersRound,
+    interviews: Video,
+    rbacMenus: SquareMenu,
+    rbacRoles: IdCard,
+    rbacUsers: UserRoundCog
+  }
+  return map[activeTab.value] || BriefcaseBusiness
 })
 
 onMounted(async () => {
@@ -1217,26 +1195,12 @@ function switchTab(tab) {
   if (['rbacMenus', 'rbacRoles', 'rbacUsers'].includes(tab)) {
     systemMenuOpen.value = true
   }
-  if (tab === 'rbacMenus') {
-    loadRbacBaseData()
-  }
-  if (tab === 'rbacRoles') {
-    loadRbacBaseData()
-    loadRoles()
-  }
-  if (tab === 'rbacUsers') {
-    loadRbacBaseData()
-    loadRbacUsers()
-  }
+  loadActiveTabData()
 }
 
 function handleMenuSelect(key) {
   if (key === 'rbac') {
     toggleSystemMenu()
-    return
-  }
-  if (key === 'interviewResults') {
-    router.push('/hr/interview-results')
     return
   }
   switchTab(key)
@@ -1267,19 +1231,49 @@ async function reload() {
     currentUser.value = user
     localStorage.setItem('hr_user', JSON.stringify(user))
     ensureAllowedActiveTab()
-    await Promise.all([
-      hasPermission('menu:jobs') ? loadJobs() : Promise.resolve(),
-      hasPermission('menu:candidates') ? loadCandidates() : Promise.resolve(),
-      hasPermission('menu:interviews') ? loadInterviews() : Promise.resolve(),
-      shouldLoadJobOptions() ? loadJobOptions() : Promise.resolve(),
-      shouldLoadCandidateOptions() ? loadCandidateOptions() : Promise.resolve(),
-      hasSystemMenu.value ? loadRbacBaseData() : Promise.resolve(),
-      hasPermission('menu:rbac:roles') ? loadRoles() : Promise.resolve(),
-      hasPermission('menu:rbac:users') ? loadRbacUsers() : Promise.resolve()
-    ])
+    await loadActiveTabData()
   } catch (err) {
   } finally {
     loading.value = false
+  }
+}
+
+async function loadActiveTabData() {
+  if (activeTab.value === 'jobs') {
+    await loadJobs()
+    return
+  }
+  if (activeTab.value === 'candidates') {
+    await Promise.all([
+      loadCandidates(),
+      loadJobOptions()
+    ])
+    return
+  }
+  if (activeTab.value === 'interviews') {
+    await Promise.all([
+      loadInterviews(),
+      loadJobOptions(),
+      loadCandidateOptions()
+    ])
+    return
+  }
+  if (activeTab.value === 'rbacMenus') {
+    await loadRbacBaseData()
+    return
+  }
+  if (activeTab.value === 'rbacRoles') {
+    await Promise.all([
+      loadRbacBaseData(),
+      loadRoles()
+    ])
+    return
+  }
+  if (activeTab.value === 'rbacUsers') {
+    await Promise.all([
+      loadRbacBaseData(),
+      loadRbacUsers()
+    ])
   }
 }
 
@@ -1539,20 +1533,6 @@ function forceCloseCreateModal() {
   editingCandidateId.value = null
 }
 
-function openPasswordModal() {
-  showPasswordModal.value = true
-}
-
-function closePasswordModal() {
-  if (saving.value) {
-    return
-  }
-  showPasswordModal.value = false
-  passwordForm.oldPassword = ''
-  passwordForm.newPassword = ''
-  passwordForm.confirmPassword = ''
-}
-
 function closeResumePreview() {
   resumePreviewModal.value = false
   resumePreview.name = ''
@@ -1699,37 +1679,6 @@ function closeUserRoleModal() {
   selectedUserRoleIds.value = []
 }
 
-async function logout() {
-  try {
-    await authApi.logout({})
-    showSuccess('退出成功')
-  } finally {
-    localStorage.removeItem('hr_token')
-    localStorage.removeItem('hr_user')
-    await router.push('/login')
-  }
-}
-
-async function changePassword() {
-  if (!passwordForm.oldPassword || !passwordForm.newPassword || !passwordForm.confirmPassword) {
-    showError('请完整填写密码信息')
-    return
-  }
-  if (passwordForm.newPassword !== passwordForm.confirmPassword) {
-    showError('两次输入的新密码不一致')
-    return
-  }
-  try {
-    saving.value = true
-    await authApi.changePassword(passwordForm)
-    closePasswordModal()
-    showSuccess('密码修改成功')
-  } catch (err) {
-  } finally {
-    saving.value = false
-  }
-}
-
 async function selectRole(role) {
   selectedRoleId.value = role.id
   expandedRolePermissionIds.value = []
@@ -1740,6 +1689,17 @@ async function selectRole(role) {
   } catch (err) {
   } finally {
     loading.value = false
+  }
+}
+
+async function logout() {
+  try {
+    await authApi.logout({})
+    showSuccess('退出成功')
+  } finally {
+    localStorage.removeItem('hr_token')
+    localStorage.removeItem('hr_user')
+    await router.push('/login')
   }
 }
 
@@ -2626,6 +2586,7 @@ function interviewStatusText(status) {
     INVITED: '已邀请',
     WAITING: '等待中',
     IN_PROGRESS: '面试中',
+    GENERATING: '报告生成中',
     COMPLETED: '已完成',
     FAILED: '失败',
     CANCELLED: '已取消',
