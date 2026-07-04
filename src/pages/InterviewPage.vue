@@ -34,9 +34,11 @@
         <label>
           面试口令
           <input
-            v-model.trim="accessCode"
+            v-model="accessCode"
             type="password"
             maxlength="32"
+            autocomplete="one-time-code"
+            inputmode="text"
             placeholder="请输入 HR 提供的面试口令"
             @keyup.enter="enterInterview"
           />
@@ -101,10 +103,14 @@ const audioUnlocked = ref(false)
 const currentUserMessageId = ref(null)
 const currentAiMessageId = ref(null)
 const hasAiChatResponseInTurn = ref(false)
+const realtimeHeartbeatTimer = ref(null)
+const manualRealtimeClosing = ref(false)
+const lastRealtimeError = ref('')
 
 const isEntered = computed(() => interview.value?.status === 'IN_PROGRESS')
 const isCompleted = computed(() => interview.value?.status === 'COMPLETED')
-const showAccessInput = computed(() => !isCompleted.value && (!isEntered.value || !accessCode.value))
+const normalizedAccessCode = computed(() => accessCode.value.trim())
+const showAccessInput = computed(() => !isCompleted.value && !isEntered.value)
 const interviewStatusText = computed(() => {
   const map = {
     INVITED: '已邀请',
@@ -130,7 +136,8 @@ const realtimeHint = computed(() => {
   if (!isEntered.value) return '输入口令进入面试后，可以连接实时语音通道。'
   if (realtimeStatus.value === 'connected') return '实时语音已连接，直接开口回答即可。'
   if (realtimeStatus.value === 'connecting') return '正在连接实时语音通道，请稍候。'
-  if (realtimeStatus.value === 'failed') return '实时语音连接失败，请检查火山配置或稍后重试。'
+  if (realtimeStatus.value === 'failed') return lastRealtimeError.value || '实时语音连接失败，请稍后重试。'
+  if (realtimeStatus.value === 'disconnected') return lastRealtimeError.value || '实时语音已断开，请点击重新连接。'
   return '点击连接实时语音后，会开启麦克风并接入火山端到端实时语音。'
 })
 
@@ -145,27 +152,29 @@ async function reload() {
 }
 
 async function enterInterview() {
-  if (!accessCode.value) {
+  const code = normalizedAccessCode.value
+  if (!code) {
     showError('请输入面试口令')
     return
   }
   try {
     await unlockMobileAudio()
-    interview.value = await publicInterviewApi.enter({ token, accessCode: accessCode.value })
+    interview.value = await publicInterviewApi.enter({ token, accessCode: code })
+    accessCode.value = code
     showSuccess('已进入面试')
-    await connectRealtime()
   } catch (err) {
   }
 }
 
 async function finishInterview() {
-  if (!accessCode.value) {
+  const code = normalizedAccessCode.value
+  if (!code) {
     showError('请输入面试口令')
     return
   }
   try {
     disconnectRealtime()
-    interview.value = await publicInterviewApi.finish({ token, accessCode: accessCode.value })
+    interview.value = await publicInterviewApi.finish({ token, accessCode: code })
     showSuccess('面试已结束')
   } catch (err) {
   }
@@ -176,18 +185,24 @@ async function connectRealtime() {
     showError('请先进入面试')
     return
   }
-  if (!accessCode.value) {
+  const code = normalizedAccessCode.value
+  if (!code) {
     showError('请输入面试口令')
     return
   }
   await unlockMobileAudio()
-  disconnectRealtime()
+  disconnectRealtime(true, false)
+  lastRealtimeError.value = ''
+  manualRealtimeClosing.value = false
   realtimeConnecting.value = true
   realtimeStatus.value = 'connecting'
+  let microphoneReady = false
   try {
+    await prepareMicrophoneCapture()
+    microphoneReady = true
     const result = await publicInterviewApi.connectRealtime({
       token,
-      accessCode: accessCode.value
+      accessCode: code
     })
     const socket = new WebSocket(buildRealtimeWsUrl(result.websocketUrl, result.ticket))
     socket.binaryType = 'arraybuffer'
@@ -195,31 +210,46 @@ async function connectRealtime() {
     socket.onopen = () => {
       realtimeStatus.value = 'connected'
       showSuccess('实时语音已连接')
-      startMicrophoneCapture()
+      startRealtimeHeartbeat()
+      bindMicrophoneToRealtimeSocket()
     }
     socket.onmessage = event => handleRealtimeMessage(event)
     socket.onerror = () => {
       realtimeStatus.value = 'failed'
+      lastRealtimeError.value = '实时语音连接异常，请检查网络后重新连接。'
     }
-    socket.onclose = () => {
+    socket.onclose = event => {
+      stopRealtimeHeartbeat()
+      stopMicrophoneCapture()
+      realtimeSocket.value = null
+      if (manualRealtimeClosing.value) {
+        manualRealtimeClosing.value = false
+        return
+      }
       if (realtimeStatus.value !== 'failed') {
         realtimeStatus.value = 'disconnected'
       }
+      const reason = event.reason ? `，原因：${event.reason}` : ''
+      lastRealtimeError.value = `实时语音已断开，请点击重新连接。关闭码：${event.code}${reason}`
     }
   } catch (err) {
     realtimeStatus.value = 'failed'
+    lastRealtimeError.value = microphoneReady ? '实时语音连接失败，请检查网络后重新连接' : getMicrophoneErrorMessage(err)
+    showError(lastRealtimeError.value)
     disconnectRealtime(false)
   } finally {
     realtimeConnecting.value = false
   }
 }
 
-function disconnectRealtime(resetStatus = true) {
+function disconnectRealtime(resetStatus = true, sendFinish = true) {
+  stopRealtimeHeartbeat()
   stopMicrophoneCapture()
   currentUserMessageId.value = null
   currentAiMessageId.value = null
   if (realtimeSocket.value) {
-    if (realtimeSocket.value.readyState === WebSocket.OPEN) {
+    manualRealtimeClosing.value = true
+    if (sendFinish && realtimeSocket.value.readyState === WebSocket.OPEN) {
       realtimeSocket.value.send('finish')
     }
     realtimeSocket.value.close()
@@ -231,44 +261,58 @@ function disconnectRealtime(resetStatus = true) {
   }
   if (resetStatus) {
     realtimeStatus.value = 'idle'
+    lastRealtimeError.value = ''
   }
 }
 
-async function startMicrophoneCapture() {
-  try {
-    if (!navigator.mediaDevices?.getUserMedia) {
-      realtimeStatus.value = 'failed'
-      showError('当前浏览器不支持麦克风，请使用手机 Safari/Chrome 并通过 HTTPS 打开面试链接')
-      disconnectRealtime(false)
-      return
+function startRealtimeHeartbeat() {
+  stopRealtimeHeartbeat()
+  realtimeHeartbeatTimer.value = window.setInterval(() => {
+    if (realtimeSocket.value?.readyState === WebSocket.OPEN) {
+      realtimeSocket.value.send('__ping')
     }
-    audioContext.value = audioContext.value || createAudioContext()
-    await audioContext.value.resume()
-    localStream.value = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        channelCount: 1,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true
-      }
-    })
-    mediaSource.value = audioContext.value.createMediaStreamSource(localStream.value)
-    audioProcessor.value = audioContext.value.createScriptProcessor(4096, 1, 1)
-    audioProcessor.value.onaudioprocess = event => {
-      if (realtimeSocket.value?.readyState !== WebSocket.OPEN) return
-      const input = event.inputBuffer.getChannelData(0)
-      const pcm = encodePcm16(resampleTo16k(input, audioContext.value.sampleRate))
-      if (pcm.byteLength > 0) {
-        realtimeSocket.value.send(pcm)
-      }
-    }
-    mediaSource.value.connect(audioProcessor.value)
-    audioProcessor.value.connect(audioContext.value.destination)
-  } catch (err) {
-    realtimeStatus.value = 'failed'
-    showError(getMicrophoneErrorMessage(err))
-    disconnectRealtime(false)
+  }, 15000)
+}
+
+function stopRealtimeHeartbeat() {
+  if (realtimeHeartbeatTimer.value) {
+    window.clearInterval(realtimeHeartbeatTimer.value)
+    realtimeHeartbeatTimer.value = null
   }
+}
+
+async function prepareMicrophoneCapture() {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    throw new Error('MICROPHONE_UNSUPPORTED')
+  }
+  audioContext.value = audioContext.value || createAudioContext()
+  await audioContext.value.resume()
+  localStream.value = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      channelCount: 1,
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true
+    }
+  })
+  mediaSource.value = audioContext.value.createMediaStreamSource(localStream.value)
+  audioProcessor.value = audioContext.value.createScriptProcessor(4096, 1, 1)
+  audioProcessor.value.connect(audioContext.value.destination)
+}
+
+function bindMicrophoneToRealtimeSocket() {
+  if (!audioProcessor.value || !mediaSource.value) {
+    return
+  }
+  audioProcessor.value.onaudioprocess = event => {
+    if (realtimeSocket.value?.readyState !== WebSocket.OPEN) return
+    const input = event.inputBuffer.getChannelData(0)
+    const pcm = encodePcm16(resampleTo16k(input, audioContext.value.sampleRate))
+    if (pcm.byteLength > 0) {
+      realtimeSocket.value.send(`audio:${arrayBufferToBase64(pcm)}`)
+    }
+  }
+  mediaSource.value.connect(audioProcessor.value)
 }
 
 function stopMicrophoneCapture() {
@@ -299,6 +343,10 @@ function sendTextQuery() {
 
 function handleRealtimeMessage(event) {
   if (typeof event.data === 'string') {
+    if (event.data.startsWith('audio:')) {
+      playRealtimeAudio(base64ToArrayBuffer(event.data.slice(6)))
+      return
+    }
     appendRealtimeText(event.data)
     return
   }
@@ -311,7 +359,14 @@ function appendRealtimeText(text) {
     const raw = payload.payload ? JSON.parse(payload.payload) : payload
     const content = extractRealtimeContent(payload.event, raw, payload.message)
     if (payload.event === 'error' || payload.event === 'dialog_error') {
-      showError(content || 'Realtime 模型返回异常')
+      realtimeStatus.value = 'failed'
+      lastRealtimeError.value = content || 'Realtime 模型返回异常'
+      showError(lastRealtimeError.value)
+      return
+    }
+    if (payload.event === 'disconnected') {
+      realtimeStatus.value = 'disconnected'
+      lastRealtimeError.value = content || '实时语音已断开，请点击重新连接。'
       return
     }
     handleRealtimeTextEvent(payload.event, raw, content)
@@ -506,7 +561,29 @@ function decodePcm16(arrayBuffer) {
   return samples
 }
 
+function arrayBufferToBase64(arrayBuffer) {
+  const bytes = new Uint8Array(arrayBuffer)
+  let binary = ''
+  const chunkSize = 0x8000
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize))
+  }
+  return btoa(binary)
+}
+
+function base64ToArrayBuffer(base64) {
+  const binary = atob(base64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i)
+  }
+  return bytes.buffer
+}
+
 function getMicrophoneErrorMessage(err) {
+  if (err?.message === 'MICROPHONE_UNSUPPORTED') {
+    return '当前浏览器不支持麦克风，请使用手机 Safari/Chrome 并通过 HTTPS 打开面试链接'
+  }
   if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
     return '麦克风权限被拒绝，请在浏览器地址栏允许麦克风后重新连接'
   }

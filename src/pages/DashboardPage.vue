@@ -7,17 +7,7 @@
           <div class="brand">奢享家HR管理系统</div>
         </div>
       </div>
-      <nav class="nav">
-        <button v-if="hasPermission('menu:jobs')" :class="{ active: activeTab === 'jobs' }" @click="switchTab('jobs')">岗位管理</button>
-        <button v-if="hasPermission('menu:candidates')" :class="{ active: activeTab === 'candidates' }" @click="switchTab('candidates')">候选人管理</button>
-        <button v-if="hasPermission('menu:interviews')" :class="{ active: activeTab === 'interviews' }" @click="switchTab('interviews')">面试管理</button>
-        <button v-if="hasSystemMenu" :class="{ active: isRbacTab }" @click="toggleSystemMenu">权限管理</button>
-        <div v-show="systemMenuOpen" class="sub-nav">
-          <button v-if="hasPermission('menu:rbac:menus')" :class="{ active: activeTab === 'rbacMenus' }" @click="switchTab('rbacMenus')">菜单管理</button>
-          <button v-if="hasPermission('menu:rbac:roles')" :class="{ active: activeTab === 'rbacRoles' }" @click="switchTab('rbacRoles')">角色管理</button>
-          <button v-if="hasPermission('menu:rbac:users')" :class="{ active: activeTab === 'rbacUsers' }" @click="switchTab('rbacUsers')">用户管理</button>
-        </div>
-      </nav>
+      <AppMenu :items="menuItems" @select="handleMenuSelect" />
     </aside>
 
     <main class="main admin-main">
@@ -513,7 +503,7 @@
             绑定岗位
             <select v-model="candidateForm.jobId">
               <option value="">请选择岗位</option>
-              <option v-for="job in jobOptions" :key="job.id" :value="job.id">{{ job.title }}</option>
+              <option v-for="job in enabledJobOptions" :key="job.id" :value="job.id">{{ job.title }}</option>
             </select>
           </label>
           <label>
@@ -567,16 +557,18 @@
         <form v-if="createModal === 'interviews'" class="form-grid" @submit.prevent="createInterview">
           <label>
             岗位
-            <select v-model="interviewForm.jobId">
+            <select v-model="interviewForm.jobId" @change="onInterviewJobChange">
               <option value="">请选择岗位</option>
-              <option v-for="job in jobOptions" :key="job.id" :value="job.id">{{ job.title }}</option>
+              <option v-for="job in enabledJobOptions" :key="job.id" :value="job.id">{{ job.title }}</option>
             </select>
           </label>
           <label>
             候选人
             <select v-model="interviewForm.candidateId" @change="onInterviewCandidateChange">
               <option value="">请选择候选人</option>
-              <option v-for="candidate in candidateOptions" :key="candidate.id" :value="candidate.id">{{ candidate.name }}</option>
+              <option v-for="candidate in interviewCandidateOptions" :key="candidate.id" :value="candidate.id">
+                {{ candidateOptionLabel(candidate) }}
+              </option>
             </select>
           </label>
           <div class="modal-actions">
@@ -914,7 +906,9 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
+import { BarChart3, BriefcaseBusiness, IdCard, ShieldCheck, SquareMenu, UserRoundCog, UsersRound, Video } from '@lucide/vue'
 import { authApi, candidateApi, interviewApi, jobApi, rbacApi } from '../api/hr'
+import AppMenu from '../components/AppMenu.vue'
 import RichTextEditor from '../components/RichTextEditor.vue'
 import { showError, showSuccess } from '../utils/message'
 import brandLogo from '../assets/shexiangjia-logo.png'
@@ -1082,6 +1076,48 @@ const rolePermissionRows = computed(() => flattenPermissions(permissions.value, 
 const permissionParentOptions = computed(() => permissionRows.value.filter(item => item.id !== editingPermissionId.value && item.type === 'MENU'))
 const visibleRoles = computed(() => roles.value.filter(role => role.code !== 'ADMIN'))
 const assignableRoles = computed(() => allRoles.value.filter(role => role.code !== 'ADMIN'))
+const enabledJobOptions = computed(() => jobOptions.value.filter(item => item.status === 'ENABLED'))
+const interviewCandidateOptions = computed(() => {
+  if (!interviewForm.jobId) {
+    return candidateOptions.value
+  }
+  return candidateOptions.value.filter(item => String(item.jobId) === String(interviewForm.jobId))
+})
+const menuItems = computed(() => {
+  const items = []
+  if (hasPermission('menu:jobs')) {
+    items.push({ key: 'jobs', label: '岗位管理', icon: BriefcaseBusiness, active: activeTab.value === 'jobs' })
+  }
+  if (hasPermission('menu:candidates')) {
+    items.push({ key: 'candidates', label: '候选人管理', icon: UsersRound, active: activeTab.value === 'candidates' })
+  }
+  if (hasPermission('menu:interviews')) {
+    items.push({ key: 'interviews', label: '面试管理', icon: Video, active: activeTab.value === 'interviews' })
+    items.push({ key: 'interviewResults', label: '面试结果', icon: BarChart3, active: false })
+  }
+  const rbacChildren = [
+    hasPermission('menu:rbac:menus')
+      ? { key: 'rbacMenus', label: '菜单管理', icon: SquareMenu, active: activeTab.value === 'rbacMenus' }
+      : null,
+    hasPermission('menu:rbac:roles')
+      ? { key: 'rbacRoles', label: '角色管理', icon: IdCard, active: activeTab.value === 'rbacRoles' }
+      : null,
+    hasPermission('menu:rbac:users')
+      ? { key: 'rbacUsers', label: '用户管理', icon: UserRoundCog, active: activeTab.value === 'rbacUsers' }
+      : null
+  ].filter(Boolean)
+  if (hasSystemMenu.value) {
+    items.push({
+      key: 'rbac',
+      label: '权限管理',
+      icon: ShieldCheck,
+      active: isRbacTab.value,
+      open: systemMenuOpen.value,
+      children: rbacChildren
+    })
+  }
+  return items
+})
 const activeTabTitle = computed(() => {
   const map = {
     jobs: '岗位管理',
@@ -1178,11 +1214,34 @@ function switchTab(tab) {
   }
 }
 
+function handleMenuSelect(key) {
+  if (key === 'rbac') {
+    toggleSystemMenu()
+    return
+  }
+  if (key === 'interviewResults') {
+    router.push('/hr/interview-results')
+    return
+  }
+  switchTab(key)
+}
+
 function toggleSystemMenu() {
   systemMenuOpen.value = !systemMenuOpen.value
   if (systemMenuOpen.value && !isRbacTab.value) {
-    switchTab('rbacMenus')
+    const firstAllowedTab = firstAllowedRbacTab()
+    if (firstAllowedTab) {
+      switchTab(firstAllowedTab)
+    }
   }
+}
+
+function firstAllowedRbacTab() {
+  return [
+    ['rbacMenus', 'menu:rbac:menus'],
+    ['rbacRoles', 'menu:rbac:roles'],
+    ['rbacUsers', 'menu:rbac:users']
+  ].find(([, code]) => hasPermission(code))?.[0] || ''
 }
 
 async function reload() {
@@ -1292,7 +1351,7 @@ async function loadRbacBaseData() {
 }
 
 async function loadJobOptions() {
-  if (!hasPermission('job:list')) {
+  if (!hasPermission('menu:jobs')) {
     jobOptions.value = []
     return
   }
@@ -1306,7 +1365,7 @@ async function loadJobOptions() {
 }
 
 async function loadCandidateOptions() {
-  if (!hasPermission('candidate:list')) {
+  if (!hasPermission('menu:candidates')) {
     candidateOptions.value = []
     return
   }
@@ -1332,7 +1391,7 @@ async function refreshCandidateOptionsIfAllowed() {
 }
 
 function shouldLoadJobOptions() {
-  return hasPermission('job:list') && (
+  return hasPermission('menu:jobs') && (
     hasPermission('menu:candidates')
     || hasPermission('menu:interviews')
     || hasPermission('candidate:create')
@@ -1342,7 +1401,7 @@ function shouldLoadJobOptions() {
 }
 
 function shouldLoadCandidateOptions() {
-  return hasPermission('candidate:list') && (
+  return hasPermission('menu:candidates') && (
     hasPermission('menu:interviews')
     || hasPermission('interview:create')
   )
@@ -2276,10 +2335,29 @@ async function parseResumePdf(event) {
     saving.value = true
     const result = await candidateApi.parseResumePdf(file)
     setResumeEditorHtml(result.htmlContent || '')
+    applyParsedCandidateProfile(result)
     showSuccess('PDF 简历解析成功')
   } catch (err) {
   } finally {
     saving.value = false
+  }
+}
+
+function applyParsedCandidateProfile(result) {
+  if (!candidateForm.name && result.name) {
+    candidateForm.name = result.name
+  }
+  if (!candidateForm.gender && result.gender) {
+    candidateForm.gender = result.gender
+  }
+  if ((candidateForm.age === null || candidateForm.age === '') && result.age !== null && result.age !== undefined) {
+    candidateForm.age = Number(result.age)
+  }
+  if (!candidateForm.phone && result.phone) {
+    candidateForm.phone = result.phone
+  }
+  if (!candidateForm.email && result.email) {
+    candidateForm.email = result.email
   }
 }
 
@@ -2402,8 +2480,23 @@ async function copyInviteInfo() {
   }
 }
 
+function candidateOptionLabel(candidate) {
+  const job = jobOptions.value.find(item => String(item.id) === String(candidate.jobId))
+  return job?.title ? `${candidate.name}（${job.title}）` : candidate.name
+}
+
+function onInterviewJobChange() {
+  if (!interviewForm.candidateId) {
+    return
+  }
+  const candidate = candidateOptions.value.find(item => String(item.id) === String(interviewForm.candidateId))
+  if (candidate && String(candidate.jobId) !== String(interviewForm.jobId)) {
+    interviewForm.candidateId = ''
+  }
+}
+
 function onInterviewCandidateChange() {
-  const candidate = candidates.value.find(item => String(item.id) === String(interviewForm.candidateId))
+  const candidate = candidateOptions.value.find(item => String(item.id) === String(interviewForm.candidateId))
   if (candidate?.jobId) {
     interviewForm.jobId = candidate.jobId
   }

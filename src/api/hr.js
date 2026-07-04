@@ -2,6 +2,8 @@ import { post, postForm } from './http'
 
 export const authApi = {
   login: data => post('/api/auth/login', data),
+  wecomConfig: data => post('/api/auth/wecom/config', data),
+  wecomLogin: data => post('/api/auth/wecom/login', data),
   me: data => post('/api/auth/me', data),
   logout: data => post('/api/auth/logout', data),
   changePassword: data => post('/api/auth/change-password', data)
@@ -33,7 +35,8 @@ export const interviewApi = {
   create: data => post('/api/interviews/create', data),
   resetAccessCode: data => post('/api/interviews/access-code/reset', data),
   messages: data => post('/api/interviews/messages/list', data),
-  report: data => post('/api/interviews/reports/detail', data)
+  report: data => post('/api/interviews/reports/detail', data),
+  reports: data => post('/api/interviews/reports/list', data)
 }
 
 export const publicInterviewApi = {

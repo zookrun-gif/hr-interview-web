@@ -5,10 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:wecom-callback": "node local-wecom-callback.js",
     "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
+    "@lucide/vue": "^1.23.0",
     "@vitejs/plugin-vue": "^5.2.1",
     "@wangeditor/editor": "^5.1.23",
     "@wangeditor/editor-for-vue": "^5.1.12",

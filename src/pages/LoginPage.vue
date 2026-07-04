@@ -20,12 +20,18 @@
         </label>
         <button class="primary" type="submit">登录</button>
       </form>
+
+      <div class="login-divider"><span>或</span></div>
+      <button class="wecom-login" type="button" :disabled="wecomLoading" @click="goWeComLogin">
+        <span class="wecom-icon">企</span>
+        {{ wecomLoading ? '正在打开企业微信' : '企业微信扫码登录' }}
+      </button>
     </section>
   </main>
 </template>
 
 <script setup>
-import { reactive } from 'vue'
+import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { authApi } from '../api/hr'
 import { showSuccess } from '../utils/message'
@@ -36,15 +42,33 @@ const form = reactive({
   email: '',
   password: ''
 })
+const wecomLoading = ref(false)
 
 async function login() {
   try {
     const result = await authApi.login(form)
-    localStorage.setItem('hr_token', result.token)
-    localStorage.setItem('hr_user', JSON.stringify(result.user))
+    saveLoginResult(result)
     showSuccess('登录成功')
     await router.push('/')
   } catch (err) {
   }
+}
+
+async function goWeComLogin() {
+  try {
+    wecomLoading.value = true
+    const config = await authApi.wecomConfig({})
+    if (!config?.enabled || !config.loginUrl) {
+      return
+    }
+    window.location.href = config.loginUrl
+  } finally {
+    wecomLoading.value = false
+  }
+}
+
+function saveLoginResult(result) {
+  localStorage.setItem('hr_token', result.token)
+  localStorage.setItem('hr_user', JSON.stringify(result.user))
 }
 </script>
