@@ -26,7 +26,7 @@ export const candidateApi = {
   parseResumePdf: file => {
     const formData = new FormData()
     formData.append('file', file)
-    return postForm('/api/candidates/resume/parse-pdf', formData)
+    return postForm('/api/candidates/resume/parse-pdf', formData, { timeout: 120000 })
   }
 }
 

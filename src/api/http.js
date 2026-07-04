@@ -26,11 +26,12 @@ export async function post(url, data = {}) {
   return requestPost(url, data)
 }
 
-export async function postForm(url, formData) {
+export async function postForm(url, formData, config = {}) {
   return requestPost(url, formData, {
     headers: {
       'Content-Type': 'multipart/form-data'
-    }
+    },
+    ...config
   })
 }
 
@@ -52,7 +53,7 @@ async function requestPost(url, data = {}, config = {}) {
       throw err
     }
     if (!err.response) {
-      showError(err.message || '网络异常，请稍后再试')
+      showError(err.code === 'ECONNABORTED' ? '请求处理时间较长，请稍后重试' : (err.message || '网络异常，请稍后再试'))
       throw err
     }
     const message = err.response.data?.message || '网络异常，请稍后再试'

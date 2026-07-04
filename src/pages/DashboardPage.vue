@@ -538,9 +538,21 @@
             <div class="resume-editor-section">
               <div class="resume-editor-actions">
                 <label class="upload-button">
-                  上传 PDF 解析
-                  <input type="file" accept="application/pdf" @change="parseResumePdf" />
+                  {{ resumeParsing ? '解析中' : '上传 PDF 解析' }}
+                  <input type="file" accept="application/pdf" :disabled="resumeParsing" @change="parseResumePdf" />
                 </label>
+              </div>
+              <div v-if="resumeParsing" class="resume-parse-progress">
+                <div
+                  class="resume-progress-ring"
+                  :style="{ '--progress': `${resumeParseProgress}%` }"
+                >
+                  <span>{{ resumeParseProgress }}%</span>
+                </div>
+                <div class="resume-progress-copy">
+                  <b>{{ resumeParseProgress >= 100 ? '解析完成' : 'AI 正在解析简历' }}</b>
+                  <small>{{ resumeParseProgress >= 100 ? '正在填充候选人信息' : '复杂 PDF 可能需要一点时间，请保持当前页面打开' }}</small>
+                </div>
               </div>
               <RichTextEditor
                 v-model="candidateForm.resumeText"
@@ -950,6 +962,9 @@ const expandedRolePermissionIds = ref([])
 const selectedUserRoleIds = ref([])
 const loading = ref(false)
 const saving = ref(false)
+const resumeParsing = ref(false)
+const resumeParseProgress = ref(0)
+let resumeParseTimer = null
 
 const jobQuery = reactive({ keyword: '', status: '' })
 const candidateQuery = reactive({ keyword: '', jobId: '' })
@@ -978,6 +993,7 @@ const candidateForm = reactive({
   age: null,
   phone: '',
   email: '',
+  resumeParseSource: '',
   resumeText: ''
 })
 
@@ -2257,6 +2273,24 @@ function setResumeEditorHtml(html) {
   candidateForm.resumeText = html || ''
 }
 
+function plainTextToHtml(text) {
+  return String(text || '')
+    .split(/\n{2,}/)
+    .map(block => block.trim())
+    .filter(Boolean)
+    .map(block => `<p>${escapeHtml(block).replace(/\n/g, '<br/>')}</p>`)
+    .join('')
+}
+
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 function resetJobForm() {
   jobForm.title = ''
   jobForm.jd = ''
@@ -2333,14 +2367,64 @@ async function parseResumePdf(event) {
   }
   try {
     saving.value = true
+    startResumeParseProgress()
     const result = await candidateApi.parseResumePdf(file)
-    setResumeEditorHtml(result.htmlContent || '')
+    finishResumeParseProgress()
+    setResumeEditorHtml(plainTextToHtml(result.plainText || ''))
+    candidateForm.resumeParseSource = result.parseSource || ''
     applyParsedCandidateProfile(result)
-    showSuccess('PDF 简历解析成功')
+    showSuccess(`PDF 简历解析成功${candidateForm.resumeParseSource ? `，解析方式：${formatResumeParseSource(candidateForm.resumeParseSource)}` : ''}`)
   } catch (err) {
   } finally {
     saving.value = false
+    stopResumeParseProgress()
   }
+}
+
+function startResumeParseProgress() {
+  clearResumeParseTimer()
+  resumeParsing.value = true
+  resumeParseProgress.value = 0
+  const startedAt = Date.now()
+  resumeParseTimer = window.setInterval(() => {
+    const percent = Math.floor(Math.min((Date.now() - startedAt) / 30000 * 99, 99))
+    resumeParseProgress.value = Math.max(resumeParseProgress.value, percent)
+  }, 300)
+}
+
+function finishResumeParseProgress() {
+  resumeParseProgress.value = 100
+}
+
+function stopResumeParseProgress() {
+  clearResumeParseTimer()
+  if (resumeParseProgress.value >= 100) {
+    window.setTimeout(() => {
+      resumeParsing.value = false
+      resumeParseProgress.value = 0
+    }, 450)
+    return
+  }
+  resumeParsing.value = false
+  resumeParseProgress.value = 0
+}
+
+function clearResumeParseTimer() {
+  if (resumeParseTimer) {
+    window.clearInterval(resumeParseTimer)
+    resumeParseTimer = null
+  }
+}
+
+function formatResumeParseSource(source) {
+  const map = {
+    BAILIAN_QWEN_OCR: '百炼Qwen OCR',
+    PDFBOX: 'PDFBox',
+    PDFTOTEXT_LAYOUT: 'pdftotext布局',
+    PDFTOTEXT_RAW: 'pdftotext原文',
+    OCR: 'OCR'
+  }
+  return map[source] || source
 }
 
 function applyParsedCandidateProfile(result) {

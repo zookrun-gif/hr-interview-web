@@ -342,11 +342,73 @@ textarea {
 .resume-editor-actions {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
+  gap: 10px;
   min-height: 44px;
   padding: 7px 10px;
   border-bottom: 1px solid #edf0f3;
   background: #fafbfc;
+}
+
+.resume-parse-source {
+  color: #5f6b7a;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.resume-parse-progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #edf0f3;
+  background: #f8fbff;
+}
+
+.resume-progress-ring {
+  --progress: 0%;
+  position: relative;
+  display: grid;
+  flex: 0 0 auto;
+  width: 54px;
+  height: 54px;
+  place-items: center;
+  border-radius: 50%;
+  background: conic-gradient(#1f6feb var(--progress), #dbe5f2 0);
+  color: #172033;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.resume-progress-ring::before {
+  position: absolute;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: #ffffff;
+  content: "";
+}
+
+.resume-progress-ring span {
+  position: relative;
+  z-index: 1;
+}
+
+.resume-progress-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.resume-progress-copy b {
+  color: #1c293d;
+  font-size: 14px;
+}
+
+.resume-progress-copy small {
+  color: #6b7685;
+  font-size: 12px;
 }
 
 .upload-button {
