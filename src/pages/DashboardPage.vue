@@ -238,12 +238,24 @@
               <span>#{{ interview.id }}</span>
               <span>{{ interview.jobTitle || '-' }}</span>
               <span>{{ interview.candidateName || '-' }}</span>
-              <span><b class="status-tag">{{ interviewStatusText(interview.status) }}</b></span>
+              <span>
+                <b :class="['status-tag', 'interview-status-tag', interviewStatusClass(interview.status)]">
+                  {{ interviewStatusText(interview.status) }}
+                </b>
+              </span>
               <span>
                 <button v-if="interview.status === 'INVITED'" :disabled="loading" @click="copyInterviewInvite(interview)">复制邀请</button>
                 <b v-else class="muted-text">-</b>
               </span>
               <span class="actions">
+                <button
+                  v-if="interview.status === 'IN_PROGRESS' && hasPermission('interview:finish')"
+                  class="danger close-interview-button"
+                  :disabled="loading"
+                  @click="openCloseInterviewModal(interview)"
+                >
+                  关闭面试
+                </button>
                 <button :disabled="loading || interview.status !== 'COMPLETED'" @click="openReportModal(interview.id)">报告</button>
                 <button :disabled="loading" @click="openMessagesModal(interview.id)">对话</button>
               </span>
@@ -264,6 +276,105 @@
               <button :disabled="loading || interviewPagination.pageNo >= totalPages(interviewPagination)" @click="changePage(interviewPagination, loadInterviews, interviewPagination.pageNo + 1)">下一页</button>
             </div>
           </div>
+        </section>
+      </section>
+
+      <section v-show="activeTab === 'aiSettings'" class="admin-page">
+        <section class="data-panel">
+          <div class="panel-toolbar">
+            <h2>AI 面试边界</h2>
+            <button v-if="hasPermission('ai-setting:update')" class="primary" :disabled="saving" @click="saveAiSetting">
+              {{ saving ? '保存中' : '保存配置' }}
+            </button>
+          </div>
+          <form class="ai-setting-form" @submit.prevent="saveAiSetting">
+            <div class="ai-setting-block">
+              <div class="setting-block-title">
+                <b>提问边界</b>
+                <small>控制 AI 面试官问多少、追多深、什么时候收尾</small>
+              </div>
+              <div class="ai-setting-grid">
+                <label>
+                  目标提问数
+                  <input v-model.number="aiSettingForm.targetQuestionCount" type="number" min="1" max="50" />
+                  <small>接近这个数量后开始收尾</small>
+                </label>
+                <label>
+                  最大提问数
+                  <input v-model.number="aiSettingForm.maxQuestionCount" type="number" min="1" max="80" />
+                  <small>达到后不再继续追问</small>
+                </label>
+                <label>
+                  收尾补充轮次
+                  <input v-model.number="aiSettingForm.closingFollowUpTurnLimit" type="number" min="0" max="5" />
+                  <small>达到最大数后允许补充/反问，0 为直接结束</small>
+                </label>
+                <label>
+                  单话题追问上限
+                  <input v-model.number="aiSettingForm.maxFollowUpPerTopic" type="number" min="0" max="10" />
+                  <small>防止围绕一个点一直问</small>
+                </label>
+              </div>
+            </div>
+
+            <div class="ai-setting-block">
+              <div class="setting-block-title">
+                <b>评分封顶</b>
+                <small>控制 AI 不能因为感觉好就把明显证据不足的面试打高分</small>
+              </div>
+              <div class="ai-setting-grid">
+                <label>
+                  最低有效回答轮次
+                  <input v-model.number="aiSettingForm.minEffectiveAnswerCount" type="number" min="1" max="20" />
+                  <small>少于该轮次会触发低可信封顶</small>
+                </label>
+                <label>
+                  回答不足最高分
+                  <input v-model.number="aiSettingForm.insufficientAnswerMaxScore" type="number" min="0" max="100" />
+                  <small>有效回答太少时的总分上限</small>
+                </label>
+                <label>
+                  无案例最高分
+                  <input v-model.number="aiSettingForm.noEvidenceMaxScore" type="number" min="0" max="100" />
+                  <small>没有真实案例或细节时的总分上限</small>
+                </label>
+                <label>
+                  匹配弱最高分
+                  <input v-model.number="aiSettingForm.weakJobMatchMaxScore" type="number" min="0" max="100" />
+                  <small>岗位匹配度明显不足时的总分上限</small>
+                </label>
+                <label>
+                  回答弱最高分
+                  <input v-model.number="aiSettingForm.weakAnswerMaxScore" type="number" min="0" max="100" />
+                  <small>答非所问或泛答时的总分上限</small>
+                </label>
+              </div>
+            </div>
+
+            <div class="ai-setting-block">
+              <div class="setting-block-title">
+                <b>反问口径</b>
+                <small>候选人询问试岗期、试用期、作息、福利等公司制度时，AI 只能按这里回答</small>
+              </div>
+              <label class="ai-setting-textarea">
+                候选人反问回答口径
+                <textarea
+                  v-model.trim="aiSettingForm.candidateQuestionAnswerGuide"
+                  maxlength="2000"
+                  rows="4"
+                  placeholder="例如：试岗期/试岗：7天&#10;作息时间/上下班：大小周，9:30 到 18:00"
+                ></textarea>
+                <small>未写明的信息，AI 会提示以 HR 后续正式沟通为准，避免乱编公司制度</small>
+              </label>
+            </div>
+
+            <div class="setting-actions">
+              <button type="button" :disabled="loading || saving" @click="loadAiSetting">恢复当前配置</button>
+              <button v-if="hasPermission('ai-setting:update')" class="primary" type="submit" :disabled="saving">
+                {{ saving ? '保存中' : '保存配置' }}
+              </button>
+            </div>
+          </form>
         </section>
       </section>
 
@@ -459,7 +570,7 @@
     </main>
 
     <div v-if="createModal" class="modal-mask">
-      <section class="modal-panel">
+      <section :class="['modal-panel', { 'job-modal-panel': createModal === 'jobs' }]">
         <div class="modal-header">
           <h2>{{ createModalTitle }}</h2>
           <button class="icon-button" @click="closeCreateModal">×</button>
@@ -478,6 +589,62 @@
             能力要求
             <textarea v-model="jobForm.requirements" placeholder="专业能力、项目经验、沟通表达"></textarea>
           </label>
+          <div class="form-section">
+            <div class="form-section-header">
+              <div>
+                <b>评分维度</b>
+                <small>{{ jobForm.useDimensions ? '开启后按选择的维度约束提问和评分' : '关闭后按岗位 JD、能力要求和简历自动生成问题' }}</small>
+              </div>
+              <button
+                type="button"
+                :class="['switch-control form-switch', { active: jobForm.useDimensions }]"
+                :disabled="saving"
+                @click="toggleJobDimensionUsage"
+              >
+                <i></i>
+                <b>{{ jobForm.useDimensions ? '已开启' : '已关闭' }}</b>
+              </button>
+            </div>
+            <template v-if="jobForm.useDimensions">
+            <div class="dimension-config-toolbar">
+              <span>选择评分维度</span>
+              <div class="section-actions">
+                <button type="button" :disabled="saving" @click="resetDefaultJobDimensions">恢复默认</button>
+                <button type="button" :disabled="saving" @click="clearJobDimensions">清空维度</button>
+              </div>
+            </div>
+            <div class="dimension-option-list">
+              <button
+                v-for="dimension in dimensionOptions"
+                :key="dimension.name"
+                type="button"
+                :class="{ selected: isJobDimensionSelected(dimension.name) }"
+                :disabled="saving || isJobDimensionSelected(dimension.name)"
+                @click="addJobDimension(dimension)"
+              >
+                {{ dimension.name }}
+              </button>
+            </div>
+            <div class="dimension-editor">
+              <div v-if="jobForm.dimensions.length === 0" class="dimension-empty">
+                已开启评分维度，请从上方选择至少一个维度。
+              </div>
+              <div v-if="jobForm.dimensions.length > 0" class="dimension-table-head">
+                <span>维度名称</span>
+                <span>评分说明</span>
+                <span>权重</span>
+                <span>操作</span>
+              </div>
+              <div v-for="(dimension, index) in jobForm.dimensions" :key="index" class="dimension-row">
+                <b>{{ dimension.name }}</b>
+                <span>{{ dimension.description }}</span>
+                <input v-model.number="dimension.weight" class="weight-input" type="number" min="0" max="100" placeholder="%" />
+                <button type="button" class="danger" :disabled="saving || jobForm.dimensions.length <= 1" @click="removeJobDimension(index)">删除</button>
+              </div>
+            </div>
+            <small class="form-hint">当前权重合计：{{ jobDimensionWeightTotal }}%</small>
+            </template>
+          </div>
           <label>
             岗位状态
             <button
@@ -600,6 +767,25 @@
         <div class="modal-actions">
           <button type="button" @click="closeInviteModal">关闭</button>
           <button class="primary" type="button" @click="copyInviteInfo">复制地址和口令</button>
+        </div>
+      </section>
+    </div>
+
+    <div v-if="closeInterviewModal" class="modal-mask" @click.self="closeCloseInterviewModal">
+      <section class="modal-panel small confirm-panel">
+        <div class="modal-header">
+          <h2>关闭面试</h2>
+          <button class="icon-button" :disabled="saving" @click="closeCloseInterviewModal">×</button>
+        </div>
+        <div class="confirm-content">
+          <b>{{ selectedCloseInterview?.candidateName || '当前候选人' }}</b>
+          <p>确认关闭这场面试并生成评估报告吗？关闭后候选人将无法继续实时面试。</p>
+        </div>
+        <div class="modal-actions">
+          <button type="button" :disabled="saving" @click="closeCloseInterviewModal">取消</button>
+          <button class="danger" type="button" :disabled="saving" @click="confirmCloseInterview">
+            {{ saving ? '处理中' : '确认关闭' }}
+          </button>
         </div>
       </section>
     </div>
@@ -897,8 +1083,8 @@
 <script setup>
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { BriefcaseBusiness, IdCard, ShieldCheck, SquareMenu, UserRoundCog, UsersRound, Video } from '@lucide/vue'
-import { authApi, candidateApi, interviewApi, jobApi, rbacApi } from '../api/hr'
+import { BriefcaseBusiness, IdCard, ShieldCheck, SlidersHorizontal, SquareMenu, UserRoundCog, UsersRound, Video } from '@lucide/vue'
+import { aiSettingApi, authApi, candidateApi, interviewApi, jobApi, rbacApi } from '../api/hr'
 import AdminPageHeader from '../components/AdminPageHeader.vue'
 import AppMenu from '../components/AppMenu.vue'
 import RichTextEditor from '../components/RichTextEditor.vue'
@@ -925,6 +1111,7 @@ const resumePreviewModal = ref(false)
 const jobPreviewModal = ref(false)
 const reportModal = ref(false)
 const messagesModal = ref(false)
+const closeInterviewModal = ref(false)
 const permissionModal = ref(false)
 const roleModal = ref(false)
 const userCreateModal = ref(false)
@@ -936,6 +1123,7 @@ const editingPermissionId = ref(null)
 const editingRoleId = ref(null)
 const selectedRoleId = ref(null)
 const selectedUser = ref(null)
+const selectedCloseInterview = ref(null)
 const selectedPermissionIds = ref([])
 const expandedRolePermissionIds = ref([])
 const selectedUserRoleIds = ref([])
@@ -956,12 +1144,29 @@ const candidatePagination = reactive({ pageNo: 1, pageSize: 10, total: 0 })
 const interviewPagination = reactive({ pageNo: 1, pageSize: 10, total: 0 })
 const rolePagination = reactive({ pageNo: 1, pageSize: 10, total: 0 })
 const rbacUserPagination = reactive({ pageNo: 1, pageSize: 10, total: 0 })
+const defaultJobDimensions = [
+  { name: '客户需求挖掘', description: '能否问清客户真实需求、预算、偏好、同行人情况和隐性顾虑。', weight: 20 },
+  { name: '行程方案设计', description: '能否设计合理、有高端感、可落地的定制行程方案。', weight: 20 },
+  { name: '资源协调与应急', description: '能否处理改期、换酒店、航班变化、资源紧张等突发情况。', weight: 20 },
+  { name: '销售转化', description: '能否建立信任、回应异议并推动客户成交。', weight: 20 },
+  { name: '服务意识', description: '是否关注细节、隐私、舒适度和客户全流程体验。', weight: 20 }
+]
+const dimensionOptions = [
+  ...defaultJobDimensions,
+  { name: '目的地理解', description: '能否理解目的地特色、季节、交通、酒店和玩法差异。', weight: 20 },
+  { name: '高净值客户沟通', description: '能否用专业、克制、可信的方式服务高要求客户。', weight: 20 },
+  { name: '预算控制', description: '能否在预算和体验之间做合理取舍并解释清楚。', weight: 20 },
+  { name: '培训落地', description: '能否设计培训内容、带教新人并复盘培训效果。', weight: 20 },
+  { name: '表达完整度', description: '候选人表达是否连贯，是否能讲清背景、动作、结果和反思。', weight: 20 },
+  { name: '岗位匹配度', description: '候选人本次回答与岗位 JD、能力要求、服务场景或业务场景的匹配程度。', weight: 20 }
+]
 
 const jobForm = reactive({
   title: '',
   jd: '',
   requirements: '',
   status: 'ENABLED',
+  useDimensions: false,
   dimensions: []
 })
 
@@ -1004,6 +1209,19 @@ const interviewForm = reactive({
 })
 
 const interviewAccessCodes = reactive({})
+
+const aiSettingForm = reactive({
+  targetQuestionCount: 8,
+  maxQuestionCount: 12,
+  closingFollowUpTurnLimit: 1,
+  maxFollowUpPerTopic: 2,
+  minEffectiveAnswerCount: 2,
+  insufficientAnswerMaxScore: 60,
+  noEvidenceMaxScore: 70,
+  weakJobMatchMaxScore: 74,
+  weakAnswerMaxScore: 59,
+  candidateQuestionAnswerGuide: '试岗期/试岗：7天\n作息时间/上下班/大小周/休息时间：大小周，9:30 到 18:00\n工资发放时间/发薪日/几号发工资：每月18号\n薪资结构/工资/底薪/提成/业绩/奖金/薪酬：由线下面试 HR 进一步沟通确认，不回答金额、比例或规则\n试用期/福利/调休/加班/社保/公积金：以 HR 后续正式沟通为准'
+})
 
 const inviteInfo = reactive({
   url: '',
@@ -1049,6 +1267,9 @@ const createModalTitle = computed(() => {
   if (createModal.value === 'candidates') return editingCandidateId.value ? '编辑候选人' : '新增候选人'
   return '新增面试'
 })
+const jobDimensionWeightTotal = computed(() => {
+  return jobForm.dimensions.reduce((sum, item) => sum + Number(item.weight || 0), 0)
+})
 
 const reportDimensions = computed(() => parseJsonArray(reportDetail.dimensionScoresJson))
 const reportQuestions = computed(() => parseJsonArray(reportDetail.followUpQuestions))
@@ -1078,6 +1299,9 @@ const menuItems = computed(() => {
   if (hasPermission('menu:interviews')) {
     items.push({ key: 'interviews', label: '面试管理', icon: Video, active: activeTab.value === 'interviews' })
   }
+  if (hasPermission('menu:aiSettings')) {
+    items.push({ key: 'aiSettings', label: 'AI面试配置', icon: SlidersHorizontal, active: activeTab.value === 'aiSettings' })
+  }
   const rbacChildren = [
     hasPermission('menu:rbac:menus')
       ? { key: 'rbacMenus', label: '菜单管理', icon: SquareMenu, active: activeTab.value === 'rbacMenus' }
@@ -1106,6 +1330,7 @@ const activeTabTitle = computed(() => {
     jobs: '岗位管理',
     candidates: '候选人管理',
     interviews: '面试管理',
+    aiSettings: 'AI面试配置',
     rbacMenus: '菜单管理',
     rbacRoles: '角色管理',
     rbacUsers: '用户管理'
@@ -1117,6 +1342,7 @@ const activeTabDesc = computed(() => {
     jobs: '维护岗位 JD、能力要求和启停状态',
     candidates: '管理候选人资料、简历和绑定岗位',
     interviews: '创建邀请、查看对话和面试报告',
+    aiSettings: '配置 AI 提问数量、追问深度和评分封顶规则',
     rbacMenus: '维护菜单、按钮和接口权限节点',
     rbacRoles: '维护角色并分配菜单和按钮权限',
     rbacUsers: '维护用户与角色的绑定关系'
@@ -1128,6 +1354,7 @@ const activeTabIcon = computed(() => {
     jobs: BriefcaseBusiness,
     candidates: UsersRound,
     interviews: Video,
+    aiSettings: SlidersHorizontal,
     rbacMenus: SquareMenu,
     rbacRoles: IdCard,
     rbacUsers: UserRoundCog
@@ -1159,6 +1386,7 @@ function tabPermissionCode(tab) {
     jobs: 'menu:jobs',
     candidates: 'menu:candidates',
     interviews: 'menu:interviews',
+    aiSettings: 'menu:aiSettings',
     rbacMenus: 'menu:rbac:menus',
     rbacRoles: 'menu:rbac:roles',
     rbacUsers: 'menu:rbac:users'
@@ -1174,6 +1402,7 @@ function ensureAllowedActiveTab() {
     ['jobs', 'menu:jobs'],
     ['candidates', 'menu:candidates'],
     ['interviews', 'menu:interviews'],
+    ['aiSettings', 'menu:aiSettings'],
     ['rbacMenus', 'menu:rbac:menus'],
     ['rbacRoles', 'menu:rbac:roles'],
     ['rbacUsers', 'menu:rbac:users']
@@ -1188,6 +1417,7 @@ function switchTab(tab) {
   if (tab === 'jobs' && !hasPermission('menu:jobs')) return
   if (tab === 'candidates' && !hasPermission('menu:candidates')) return
   if (tab === 'interviews' && !hasPermission('menu:interviews')) return
+  if (tab === 'aiSettings' && !hasPermission('menu:aiSettings')) return
   if (tab === 'rbacMenus' && !hasPermission('menu:rbac:menus')) return
   if (tab === 'rbacRoles' && !hasPermission('menu:rbac:roles')) return
   if (tab === 'rbacUsers' && !hasPermission('menu:rbac:users')) return
@@ -1256,6 +1486,10 @@ async function loadActiveTabData() {
       loadJobOptions(),
       loadCandidateOptions()
     ])
+    return
+  }
+  if (activeTab.value === 'aiSettings') {
+    await loadAiSetting()
     return
   }
   if (activeTab.value === 'rbacMenus') {
@@ -1388,6 +1622,16 @@ async function loadCandidateOptions() {
   candidateOptions.value = page.records || []
 }
 
+async function loadAiSetting() {
+  if (!hasPermission('ai-setting:detail') && !hasPermission('menu:aiSettings')) {
+    return
+  }
+  return withLoading(async () => {
+    const detail = await aiSettingApi.detail({})
+    applyAiSetting(detail || {})
+  })
+}
+
 async function refreshJobOptionsIfAllowed() {
   if (shouldLoadJobOptions()) {
     await loadJobOptions()
@@ -1442,6 +1686,72 @@ function searchRoles() {
 function searchRbacUsers() {
   rbacUserPagination.pageNo = 1
   loadRbacUsers()
+}
+
+function applyAiSetting(detail) {
+  aiSettingForm.targetQuestionCount = Number(detail.targetQuestionCount ?? 8)
+  aiSettingForm.maxQuestionCount = Number(detail.maxQuestionCount ?? 12)
+  aiSettingForm.closingFollowUpTurnLimit = Number(detail.closingFollowUpTurnLimit ?? 1)
+  aiSettingForm.maxFollowUpPerTopic = Number(detail.maxFollowUpPerTopic ?? 2)
+  aiSettingForm.minEffectiveAnswerCount = Number(detail.minEffectiveAnswerCount ?? 2)
+  aiSettingForm.insufficientAnswerMaxScore = Number(detail.insufficientAnswerMaxScore ?? 60)
+  aiSettingForm.noEvidenceMaxScore = Number(detail.noEvidenceMaxScore ?? 70)
+  aiSettingForm.weakJobMatchMaxScore = Number(detail.weakJobMatchMaxScore ?? 74)
+  aiSettingForm.weakAnswerMaxScore = Number(detail.weakAnswerMaxScore ?? 59)
+  aiSettingForm.candidateQuestionAnswerGuide = detail.candidateQuestionAnswerGuide || '试岗期/试岗：7天\n作息时间/上下班/大小周/休息时间：大小周，9:30 到 18:00\n工资发放时间/发薪日/几号发工资：每月18号\n薪资结构/工资/底薪/提成/业绩/奖金/薪酬：由线下面试 HR 进一步沟通确认，不回答金额、比例或规则\n试用期/福利/调休/加班/社保/公积金：以 HR 后续正式沟通为准'
+}
+
+function validateAiSettingForm() {
+  if (aiSettingForm.maxQuestionCount < aiSettingForm.targetQuestionCount) {
+    showError('最大提问数不能小于目标提问数')
+    return false
+  }
+  if (aiSettingForm.closingFollowUpTurnLimit < 0 || aiSettingForm.closingFollowUpTurnLimit > 5) {
+    showError('收尾补充轮次必须在0到5之间')
+    return false
+  }
+  if (aiSettingForm.weakAnswerMaxScore > aiSettingForm.insufficientAnswerMaxScore) {
+    showError('回答弱最高分不能高于回答不足最高分')
+    return false
+  }
+  if (aiSettingForm.insufficientAnswerMaxScore > aiSettingForm.noEvidenceMaxScore) {
+    showError('回答不足最高分不能高于无案例最高分')
+    return false
+  }
+  if ((aiSettingForm.candidateQuestionAnswerGuide || '').length > 2000) {
+    showError('候选人反问回答口径不能超过2000字')
+    return false
+  }
+  return true
+}
+
+async function saveAiSetting() {
+  if (!hasPermission('ai-setting:update')) {
+    showError('没有保存 AI 面试配置的权限')
+    return
+  }
+  if (!validateAiSettingForm()) {
+    return
+  }
+  saving.value = true
+  try {
+    const detail = await aiSettingApi.update({
+      targetQuestionCount: Number(aiSettingForm.targetQuestionCount),
+      maxQuestionCount: Number(aiSettingForm.maxQuestionCount),
+      closingFollowUpTurnLimit: Number(aiSettingForm.closingFollowUpTurnLimit),
+      maxFollowUpPerTopic: Number(aiSettingForm.maxFollowUpPerTopic),
+      minEffectiveAnswerCount: Number(aiSettingForm.minEffectiveAnswerCount),
+      insufficientAnswerMaxScore: Number(aiSettingForm.insufficientAnswerMaxScore),
+      noEvidenceMaxScore: Number(aiSettingForm.noEvidenceMaxScore),
+      weakJobMatchMaxScore: Number(aiSettingForm.weakJobMatchMaxScore),
+      weakAnswerMaxScore: Number(aiSettingForm.weakAnswerMaxScore),
+      candidateQuestionAnswerGuide: aiSettingForm.candidateQuestionAnswerGuide
+    })
+    applyAiSetting(detail || {})
+    showSuccess('AI 面试配置已保存')
+  } finally {
+    saving.value = false
+  }
 }
 
 function resetJobQuery() {
@@ -2012,7 +2322,7 @@ async function createJob() {
   }
   try {
     saving.value = true
-    await jobApi.create(jobForm)
+    await jobApi.create(buildJobPayload())
     resetJobForm()
     forceCloseCreateModal()
     await loadJobs()
@@ -2032,7 +2342,7 @@ async function updateJob() {
     saving.value = true
     await jobApi.update({
       id: editingJobId.value,
-      ...jobForm
+      ...buildJobPayload()
     })
     resetJobForm()
     forceCloseCreateModal()
@@ -2062,16 +2372,24 @@ async function editJob(id) {
     jobForm.jd = detail.jd || ''
     jobForm.requirements = detail.requirements || ''
     jobForm.status = detail.status || 'ENABLED'
-    jobForm.dimensions = (detail.dimensions || []).map(item => ({
-      name: item.name || '',
-      description: item.description || '',
-      weight: item.weight ?? 0
-    }))
+    jobForm.dimensions = normalizeJobDimensions(detail.dimensions)
+    jobForm.useDimensions = jobForm.dimensions.length > 0
     createModal.value = 'jobs'
   } catch (err) {
   } finally {
     loading.value = false
   }
+}
+
+function normalizeJobDimensions(dimensions) {
+  const validDimensions = (dimensions || [])
+    .map(item => ({
+      name: item.name || '',
+      description: item.description || '',
+      weight: item.weight ?? 0
+    }))
+    .filter(item => item.name.trim())
+  return validDimensions
 }
 
 async function toggleJobStatus(job) {
@@ -2085,11 +2403,7 @@ async function toggleJobStatus(job) {
       jd: detail.jd || '',
       requirements: detail.requirements || '',
       status: nextStatus,
-      dimensions: (detail.dimensions || []).map(item => ({
-        name: item.name || '',
-        description: item.description || '',
-        weight: item.weight ?? 0
-      }))
+      dimensions: normalizeJobDimensions(detail.dimensions)
     })
     await loadJobs()
     await refreshJobOptionsIfAllowed()
@@ -2256,7 +2570,57 @@ function resetJobForm() {
   jobForm.jd = ''
   jobForm.requirements = ''
   jobForm.status = 'ENABLED'
+  jobForm.useDimensions = false
   jobForm.dimensions = []
+}
+
+function cloneDefaultJobDimensions() {
+  return defaultJobDimensions.map(item => ({ ...item }))
+}
+
+function resetDefaultJobDimensions() {
+  jobForm.useDimensions = true
+  jobForm.dimensions = cloneDefaultJobDimensions()
+}
+
+function clearJobDimensions() {
+  jobForm.dimensions = []
+}
+
+function toggleJobDimensionUsage() {
+  jobForm.useDimensions = !jobForm.useDimensions
+  if (!jobForm.useDimensions) {
+    jobForm.dimensions = []
+    return
+  }
+  if (jobForm.dimensions.length === 0) {
+    jobForm.dimensions = cloneDefaultJobDimensions()
+  }
+}
+
+function addJobDimension(dimension) {
+  if (!dimension || isJobDimensionSelected(dimension.name)) {
+    return
+  }
+  jobForm.dimensions.push({ ...dimension })
+}
+
+function isJobDimensionSelected(name) {
+  return jobForm.dimensions.some(item => item.name === name)
+}
+
+function removeJobDimension(index) {
+  jobForm.dimensions.splice(index, 1)
+}
+
+function buildJobPayload() {
+  return {
+    title: jobForm.title,
+    jd: jobForm.jd,
+    requirements: jobForm.requirements,
+    status: jobForm.status,
+    dimensions: jobForm.useDimensions ? normalizeJobDimensions(jobForm.dimensions) : []
+  }
 }
 
 function resetCandidateForm() {
@@ -2280,6 +2644,26 @@ function validateJobForm() {
   }
   if (!['ENABLED', 'DISABLED'].includes(jobForm.status)) {
     showError('请选择岗位状态')
+    return false
+  }
+  if (!jobForm.useDimensions) {
+    return true
+  }
+  const dimensions = normalizeJobDimensions(jobForm.dimensions)
+  if (dimensions.length === 0) {
+    return true
+  }
+  if (dimensions.some(item => !item.name.trim())) {
+    showError('请填写评分维度名称')
+    return false
+  }
+  if (dimensions.some(item => Number(item.weight || 0) <= 0)) {
+    showError('评分维度权重必须大于0')
+    return false
+  }
+  const totalWeight = dimensions.reduce((sum, item) => sum + Number(item.weight || 0), 0)
+  if (totalWeight !== 100) {
+    showError('评分维度权重合计需要等于100')
     return false
   }
   return true
@@ -2466,6 +2850,45 @@ async function copyInterviewInvite(interview) {
   }
 }
 
+function openCloseInterviewModal(interview) {
+  if (!interview?.id) {
+    showError('面试数据异常，无法结束面试')
+    return
+  }
+  if (interview.status !== 'IN_PROGRESS') {
+    showError('只有面试中的记录可以手动结束')
+    return
+  }
+  selectedCloseInterview.value = interview
+  closeInterviewModal.value = true
+}
+
+function closeCloseInterviewModal() {
+  if (saving.value) {
+    return
+  }
+  closeInterviewModal.value = false
+  selectedCloseInterview.value = null
+}
+
+async function confirmCloseInterview() {
+  const interview = selectedCloseInterview.value
+  if (!interview?.id) {
+    showError('面试数据异常，无法关闭面试')
+    return
+  }
+  try {
+    saving.value = true
+    await interviewApi.finish({ id: interview.id })
+    closeInterviewModal.value = false
+    selectedCloseInterview.value = null
+    await loadInterviews()
+    showSuccess('已关闭面试，报告将进入生成队列')
+  } finally {
+    saving.value = false
+  }
+}
+
 async function openReportModal(id) {
   try {
     loading.value = true
@@ -2593,6 +3016,20 @@ function interviewStatusText(status) {
     EXPIRED: '已过期'
   }
   return map[status] || status || '-'
+}
+
+function interviewStatusClass(status) {
+  const map = {
+    INVITED: 'is-invited',
+    WAITING: 'is-waiting',
+    IN_PROGRESS: 'is-progress',
+    GENERATING: 'is-generating',
+    COMPLETED: 'is-completed',
+    FAILED: 'is-failed',
+    CANCELLED: 'is-cancelled',
+    EXPIRED: 'is-expired'
+  }
+  return map[status] || 'is-unknown'
 }
 
 function recommendationText(value) {

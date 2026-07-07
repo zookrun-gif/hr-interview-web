@@ -11,27 +11,35 @@ const router = createRouter({
       path: '/',
       name: 'dashboard',
       component: DashboardPage,
-      meta: { requiresAuth: true }
+      meta: { requiresAuth: true, title: '奢享家HR管理系统' }
     },
     {
       path: '/login',
       name: 'login',
-      component: LoginPage
+      component: LoginPage,
+      meta: { title: '奢享家HR登录' }
     },
     {
       path: '/login/wecom-callback',
       name: 'wecomCallback',
-      component: WeComCallbackPage
+      component: WeComCallbackPage,
+      meta: { title: '企业微信登录' }
     },
     {
       path: '/interview/:token',
       name: 'interview',
-      component: InterviewPage
+      component: InterviewPage,
+      meta: { title: '奢享家AI面试间' }
     }
   ]
 })
 
 router.beforeEach((to, from, next) => {
+  document.title = to.meta.title || '奢享家HR管理系统'
+  if (to.name === 'interview') {
+    next()
+    return
+  }
   const token = localStorage.getItem('hr_token')
   if (to.meta.requiresAuth && !token) {
     next('/login')

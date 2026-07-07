@@ -1,4 +1,4 @@
-import { post, postForm } from './http'
+import { post, postForm, postPublic } from './http'
 
 export const authApi = {
   login: data => post('/api/auth/login', data),
@@ -33,18 +33,24 @@ export const candidateApi = {
 export const interviewApi = {
   list: data => post('/api/interviews/list', data),
   create: data => post('/api/interviews/create', data),
+  finish: data => post('/api/interviews/finish', data),
   resetAccessCode: data => post('/api/interviews/access-code/reset', data),
   messages: data => post('/api/interviews/messages/list', data),
   report: data => post('/api/interviews/reports/detail', data),
   reports: data => post('/api/interviews/reports/list', data)
 }
 
+export const aiSettingApi = {
+  detail: data => post('/api/settings/ai-interview/detail', data),
+  update: data => post('/api/settings/ai-interview/update', data)
+}
+
 export const publicInterviewApi = {
-  detail: data => post('/api/public/interviews/detail', data),
-  enter: data => post('/api/public/interviews/enter', data),
-  finish: data => post('/api/public/interviews/finish', data),
-  messages: data => post('/api/public/interviews/messages/list', data),
-  connectRealtime: data => post('/api/public/interviews/realtime/connect', data)
+  detail: data => postPublic('/api/public/interviews/detail', data),
+  enter: data => postPublic('/api/public/interviews/enter', data),
+  finish: data => postPublic('/api/public/interviews/finish', data),
+  messages: data => postPublic('/api/public/interviews/messages/list', data),
+  connectRealtime: data => postPublic('/api/public/interviews/realtime/connect', data)
 }
 
 export const rbacApi = {

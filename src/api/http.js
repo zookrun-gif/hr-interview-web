@@ -17,7 +17,7 @@ class HandledApiError extends Error {
 
 http.interceptors.request.use(config => {
   const token = localStorage.getItem('hr_token')
-  if (token) {
+  if (token && !config.skipAuthHeader) {
     config.headers.Authorization = `Bearer ${token}`
   }
   return config
@@ -25,6 +25,13 @@ http.interceptors.request.use(config => {
 
 export async function post(url, data = {}) {
   return requestPost(url, data)
+}
+
+export async function postPublic(url, data = {}) {
+  return requestPost(url, data, {
+    skipAuthHeader: true,
+    skipAuthRedirect: true
+  })
 }
 
 export async function postForm(url, formData, config = {}) {
@@ -41,7 +48,7 @@ async function requestPost(url, data = {}, config = {}) {
     const response = await http.post(url, data, config)
     const body = response.data
     if (body && body.code !== 0) {
-      if (body.code === 401001) {
+      if (body.code === 401001 && !config.skipAuthRedirect) {
         clearLogin()
       }
       const message = body.message || '请求失败'
@@ -60,7 +67,7 @@ async function requestPost(url, data = {}, config = {}) {
       throw err
     }
     const message = err.response.data?.message || '网络异常，请稍后再试'
-    if (err.response.status === 401 || err.response.data?.code === 401001) {
+    if ((err.response.status === 401 || err.response.data?.code === 401001) && !config.skipAuthRedirect) {
       clearLogin()
     }
     showError(message)
@@ -71,6 +78,9 @@ async function requestPost(url, data = {}, config = {}) {
 function clearLogin() {
   localStorage.removeItem('hr_token')
   localStorage.removeItem('hr_user')
+  if (window.location.pathname.startsWith('/interview/')) {
+    return
+  }
   if (window.location.pathname !== '/login') {
     window.location.href = '/login'
   }
