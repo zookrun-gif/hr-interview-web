@@ -181,7 +181,7 @@
 
       <section v-show="activeTab === 'interviews'" class="admin-page">
         <section class="query-panel">
-          <form class="query-grid" @submit.prevent="searchInterviews">
+          <form class="query-grid interview-query-grid" @submit.prevent="searchInterviews">
             <label>
               岗位：
               <select v-model="interviewQuery.jobId">
@@ -206,8 +206,39 @@
                 <option value="GENERATING">报告生成中</option>
                 <option value="COMPLETED">已完成</option>
                 <option value="FAILED">失败</option>
+                <option value="EXPIRED">已过期</option>
               </select>
             </label>
+            <div class="query-field query-date-range">
+              <span>创建时间：</span>
+              <ElConfigProvider :locale="elementLocale">
+                <ElDatePicker
+                  v-model="interviewQuery.createdAtRange"
+                  type="daterange"
+                  unlink-panels
+                  clearable
+                  value-format="YYYY-MM-DD"
+                  range-separator="至"
+                  start-placeholder="开始日期"
+                  end-placeholder="结束日期"
+                />
+              </ElConfigProvider>
+            </div>
+            <div class="query-field query-date-range">
+              <span>完成时间：</span>
+              <ElConfigProvider :locale="elementLocale">
+                <ElDatePicker
+                  v-model="interviewQuery.endedAtRange"
+                  type="daterange"
+                  unlink-panels
+                  clearable
+                  value-format="YYYY-MM-DD"
+                  range-separator="至"
+                  start-placeholder="开始日期"
+                  end-placeholder="结束日期"
+                />
+              </ElConfigProvider>
+            </div>
             <div class="query-actions">
               <button class="primary" type="submit" :disabled="loading">搜索</button>
               <button type="button" :disabled="loading" @click="resetInterviewQuery">重置</button>
@@ -227,6 +258,8 @@
               <span>岗位</span>
               <span>候选人</span>
               <span>状态</span>
+              <span>过期时间</span>
+              <span>完成时间</span>
               <span>邀请</span>
               <span>操作</span>
             </div>
@@ -242,6 +275,16 @@
                 <b :class="['status-tag', 'interview-status-tag', interviewStatusClass(interview.status)]">
                   {{ interviewStatusText(interview.status) }}
                 </b>
+              </span>
+              <span class="time-cell">
+                <b v-if="shouldShowInviteExpiresAt(interview)">{{ formatDate(interview.inviteExpiresAt) }}</b>
+                <small v-if="shouldShowInviteExpiresAt(interview)">{{ formatClock(interview.inviteExpiresAt) }}</small>
+                <b v-else class="muted-text">-</b>
+              </span>
+              <span class="time-cell">
+                <b v-if="interview.endedAt">{{ formatDate(interview.endedAt) }}</b>
+                <small v-if="interview.endedAt">{{ formatClock(interview.endedAt) }}</small>
+                <b v-else class="muted-text">-</b>
               </span>
               <span>
                 <button v-if="interview.status === 'INVITED'" :disabled="loading" @click="copyInterviewInvite(interview)">复制邀请</button>
@@ -763,6 +806,7 @@
         </div>
         <div class="invite-box">
           <div class="invite-copy-content">邀请信息已生成，点击一键复制即可发送给候选人。</div>
+          <small v-if="inviteInfo.expiresAt">链接有效期至：{{ formatInviteExpiresAt(inviteInfo.expiresAt) }}</small>
         </div>
         <div class="modal-actions">
           <button type="button" @click="closeInviteModal">关闭</button>
@@ -1084,6 +1128,8 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { BriefcaseBusiness, IdCard, ShieldCheck, SlidersHorizontal, SquareMenu, UserRoundCog, UsersRound, Video } from '@lucide/vue'
+import { ElConfigProvider, ElDatePicker } from 'element-plus'
+import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import { aiSettingApi, authApi, candidateApi, interviewApi, jobApi, rbacApi } from '../api/hr'
 import AdminPageHeader from '../components/AdminPageHeader.vue'
 import AppMenu from '../components/AppMenu.vue'
@@ -1093,6 +1139,7 @@ import brandLogo from '../assets/shexiangjia-logo.png'
 
 const activeTab = ref('jobs')
 const router = useRouter()
+const elementLocale = zhCn
 const systemMenuOpen = ref(false)
 const jobs = ref([])
 const candidates = ref([])
@@ -1135,10 +1182,17 @@ let resumeParseTimer = null
 
 const jobQuery = reactive({ keyword: '', status: '' })
 const candidateQuery = reactive({ keyword: '', jobId: '' })
-const interviewQuery = reactive({ jobId: '', candidateId: '', status: '' })
+const interviewQuery = reactive({
+  jobId: '',
+  candidateId: '',
+  status: '',
+  createdAtRange: [],
+  endedAtRange: []
+})
 const roleQuery = reactive({ keyword: '', status: '' })
 const rbacUserQuery = reactive({ keyword: '', status: '' })
 const pageSizeOptions = [10, 20, 50]
+const maxResumeFileSizeBytes = 20 * 1024 * 1024
 const jobPagination = reactive({ pageNo: 1, pageSize: 10, total: 0 })
 const candidatePagination = reactive({ pageNo: 1, pageSize: 10, total: 0 })
 const interviewPagination = reactive({ pageNo: 1, pageSize: 10, total: 0 })
@@ -1225,7 +1279,8 @@ const aiSettingForm = reactive({
 
 const inviteInfo = reactive({
   url: '',
-  accessCode: ''
+  accessCode: '',
+  expiresAt: ''
 })
 
 const roleForm = reactive({
@@ -1539,12 +1594,18 @@ async function loadCandidates() {
 
 async function loadInterviews() {
   return withLoading(async () => {
+    const createdAtRange = normalizeDateRange(interviewQuery.createdAtRange)
+    const endedAtRange = normalizeDateRange(interviewQuery.endedAtRange)
     const page = await interviewApi.list({
       pageNo: interviewPagination.pageNo,
       pageSize: interviewPagination.pageSize,
       jobId: interviewQuery.jobId ? Number(interviewQuery.jobId) : null,
       candidateId: interviewQuery.candidateId ? Number(interviewQuery.candidateId) : null,
-      status: interviewQuery.status
+      status: interviewQuery.status,
+      createdAtStart: toApiDateTime(createdAtRange[0], false),
+      createdAtEnd: toApiDateTime(createdAtRange[1], true),
+      endedAtStart: toApiDateTime(endedAtRange[0], false),
+      endedAtEnd: toApiDateTime(endedAtRange[1], true)
     })
     interviews.value = (page.records || []).map(interview => ({
       ...interview,
@@ -1770,6 +1831,8 @@ function resetInterviewQuery() {
   interviewQuery.jobId = ''
   interviewQuery.candidateId = ''
   interviewQuery.status = ''
+  interviewQuery.createdAtRange = []
+  interviewQuery.endedAtRange = []
   searchInterviews()
 }
 
@@ -2709,6 +2772,10 @@ async function parseResumePdf(event) {
   if (!file) {
     return
   }
+  if (file.size > maxResumeFileSizeBytes) {
+    showError('PDF 简历不能超过20MB')
+    return
+  }
   try {
     saving.value = true
     startResumeParseProgress()
@@ -2842,7 +2909,7 @@ async function copyInterviewInvite(interview) {
     return
   }
   try {
-    const text = `面试链接：${buildInviteUrl(target)}\n面试口令：${accessCode}`
+    const text = buildInviteCopyText(target, accessCode)
     await navigator.clipboard.writeText(text)
     showSuccess('邀请信息已复制')
   } catch (err) {
@@ -2921,6 +2988,7 @@ function showInviteInfo(interview) {
   rememberInterviewAccessCode(interview)
   inviteInfo.url = buildInviteUrl(interview)
   inviteInfo.accessCode = interview?.accessCode || ''
+  inviteInfo.expiresAt = interview?.inviteExpiresAt || ''
   inviteModal.value = true
 }
 
@@ -2938,13 +3006,43 @@ function buildInviteUrl(interview) {
 }
 
 async function copyInviteInfo() {
-  const text = `面试链接：${inviteInfo.url}\n面试口令：${inviteInfo.accessCode}`
+  const text = [
+    `面试链接：${inviteInfo.url}`,
+    `面试口令：${inviteInfo.accessCode}`,
+    inviteInfo.expiresAt ? `链接有效期至：${formatInviteExpiresAt(inviteInfo.expiresAt)}` : '链接有效期：7天'
+  ].join('\n')
   try {
     await navigator.clipboard.writeText(text)
     showSuccess('邀请信息已复制')
   } catch (err) {
     showError('复制失败，请重新点击按钮或检查浏览器复制权限')
   }
+}
+
+function buildInviteCopyText(interview, accessCode) {
+  return [
+    `面试链接：${buildInviteUrl(interview)}`,
+    `面试口令：${accessCode}`,
+    interview?.inviteExpiresAt ? `链接有效期至：${formatInviteExpiresAt(interview.inviteExpiresAt)}` : '链接有效期：7天'
+  ].join('\n')
+}
+
+function formatInviteExpiresAt(value) {
+  if (!value) return '-'
+  return `${formatDate(value)} ${formatClock(value)}`
+}
+
+function toApiDateTime(value, endOfDay = false) {
+  if (!value) return null
+  return `${value}T${endOfDay ? '23:59:59' : '00:00:00'}`
+}
+
+function normalizeDateRange(value) {
+  return Array.isArray(value) && value.length === 2 ? value : []
+}
+
+function shouldShowInviteExpiresAt(interview) {
+  return ['INVITED', 'WAITING', 'EXPIRED'].includes(interview?.status) && Boolean(interview?.inviteExpiresAt)
 }
 
 function candidateOptionLabel(candidate) {

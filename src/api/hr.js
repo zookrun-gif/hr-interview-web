@@ -46,7 +46,7 @@ export const aiSettingApi = {
 }
 
 export const publicInterviewApi = {
-  detail: data => postPublic('/api/public/interviews/detail', data),
+  detail: (data, config = {}) => postPublic('/api/public/interviews/detail', data, config),
   enter: data => postPublic('/api/public/interviews/enter', data),
   finish: data => postPublic('/api/public/interviews/finish', data),
   messages: data => postPublic('/api/public/interviews/messages/list', data),

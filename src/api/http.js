@@ -27,10 +27,11 @@ export async function post(url, data = {}) {
   return requestPost(url, data)
 }
 
-export async function postPublic(url, data = {}) {
+export async function postPublic(url, data = {}, config = {}) {
   return requestPost(url, data, {
     skipAuthHeader: true,
-    skipAuthRedirect: true
+    skipAuthRedirect: true,
+    ...config
   })
 }
 
@@ -52,7 +53,7 @@ async function requestPost(url, data = {}, config = {}) {
         clearLogin()
       }
       const message = body.message || '请求失败'
-      if (body.code !== 429001) {
+      if (body.code !== 429001 && !config.skipErrorMessage) {
         showError(message)
       }
       throw new HandledApiError(message, body.code)
@@ -63,14 +64,18 @@ async function requestPost(url, data = {}, config = {}) {
       throw err
     }
     if (!err.response) {
-      showError(err.code === 'ECONNABORTED' ? '请求处理时间较长，请稍后重试' : (err.message || '网络异常，请稍后再试'))
+      if (!config.skipErrorMessage) {
+        showError(err.code === 'ECONNABORTED' ? '请求处理时间较长，请稍后重试' : (err.message || '网络异常，请稍后再试'))
+      }
       throw err
     }
     const message = err.response.data?.message || '网络异常，请稍后再试'
     if ((err.response.status === 401 || err.response.data?.code === 401001) && !config.skipAuthRedirect) {
       clearLogin()
     }
-    showError(message)
+    if (!config.skipErrorMessage) {
+      showError(message)
+    }
     throw new Error(message)
   }
 }

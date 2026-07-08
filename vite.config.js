@@ -9,7 +9,7 @@ export default defineConfig({
     allowedHosts: ['zook.run', 'zookk.run', 'localhost', '127.0.0.1'],
     proxy: {
       '/api': {
-        target: 'http://localhost:8080',
+        target: 'https://zook.kaixinzou.cn',
         changeOrigin: true
       },
       '/ws': {

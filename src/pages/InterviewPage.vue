@@ -11,7 +11,12 @@
         </button>
       </div>
 
-      <div class="interview-workspace">
+      <div v-if="invalidLink" class="interview-invalid-panel">
+        <b>面试链接不可用</b>
+        <span>{{ invalidLinkMessage }}</span>
+      </div>
+
+      <div v-else class="interview-workspace">
         <section class="interview-side-panel">
           <div class="interview-meta-grid">
             <div class="interview-info-card">
@@ -121,7 +126,7 @@ import { showError, showSuccess } from '../utils/message'
 import brandLogo from '../assets/shexiangjia-logo.png'
 
 const route = useRoute()
-const token = route.params.token
+const token = Array.isArray(route.params.token) ? route.params.token[0] : route.params.token
 const interview = ref(null)
 const accessCode = ref('')
 const remoteAudio = ref(null)
@@ -169,6 +174,8 @@ const enteringInterview = ref(false)
 const finishingInterview = ref(false)
 const deviceClass = ref('is-desktop-device')
 const accessVerified = ref(false)
+const invalidLink = ref(false)
+const invalidLinkMessage = ref('面试链接不存在或已失效，请联系 HR 重新发送邀请链接。')
 
 const isEntered = computed(() => interview.value?.status === 'IN_PROGRESS')
 const isCompleted = computed(() => ['GENERATING', 'COMPLETED', 'FAILED'].includes(interview.value?.status))
@@ -217,9 +224,16 @@ const queueRetryText = computed(() => queueRetrySeconds.value > 0
 onMounted(async () => {
   detectDevice()
   window.addEventListener('resize', detectDevice)
+  if (!token) {
+    markInvalidLink('面试链接缺少邀请信息，请联系 HR 重新发送邀请链接。')
+    return
+  }
   accessCode.value = window.sessionStorage.getItem(accessCodeStorageKey) || ''
   accessVerified.value = Boolean(accessCode.value)
   await reload()
+  if (invalidLink.value) {
+    return
+  }
   if (accessVerified.value && isEntered.value && normalizedAccessCode.value) {
     await loadHistoryMessages()
     await connectRealtime(true)
@@ -246,9 +260,12 @@ watch(() => realtimeMessages.value.length, () => {
 })
 
 async function reload() {
+  if (!token || invalidLink.value) {
+    return
+  }
   try {
     const wasInProgress = isEntered.value
-    interview.value = await publicInterviewApi.detail({ token })
+    interview.value = await publicInterviewApi.detail({ token }, { skipErrorMessage: true })
     if (!finishingInterview.value && accessVerified.value && wasInProgress && !isEntered.value) {
       markInterviewClosedByAdmin()
       return
@@ -257,7 +274,19 @@ async function reload() {
       await loadHistoryMessages()
     }
   } catch (err) {
+    if (err?.code === 404001) {
+      markInvalidLink(err.message || '面试链接不存在或已失效，请联系 HR 重新发送邀请链接。')
+    }
   }
+}
+
+function markInvalidLink(message = '') {
+  invalidLinkMessage.value = normalizeMessageText(message) || '面试链接不存在或已失效，请联系 HR 重新发送邀请链接。'
+  invalidLink.value = true
+  accessVerified.value = false
+  interview.value = null
+  window.sessionStorage.removeItem(accessCodeStorageKey)
+  stopRealtimeUiAfterTerminalEvent()
 }
 
 async function enterInterview() {

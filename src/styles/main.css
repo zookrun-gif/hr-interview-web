@@ -358,6 +358,10 @@ button:disabled {
   box-shadow: 0 12px 28px rgba(16, 24, 40, 0.04);
 }
 
+.query-panel {
+  overflow: visible;
+}
+
 .query-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(220px, 1fr));
@@ -366,7 +370,12 @@ button:disabled {
   min-width: 0;
 }
 
-.query-grid label {
+.interview-query-grid {
+  grid-template-columns: repeat(4, minmax(220px, 1fr));
+}
+
+.query-grid label,
+.query-field {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
@@ -379,6 +388,32 @@ button:disabled {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+}
+
+.interview-query-grid .query-actions {
+  grid-column: 4;
+}
+
+.query-date-range .el-date-editor {
+  width: 100%;
+  height: 44px;
+  --el-date-editor-width: 100%;
+}
+
+.query-date-range .el-date-editor.el-input__wrapper {
+  box-shadow: 0 0 0 1px #d7dfeb inset;
+}
+
+.query-date-range .el-range-input {
+  min-width: 0;
+  color: #263244;
+  font-weight: 800;
+}
+
+.query-date-range .el-range-separator {
+  flex: 0 0 24px;
+  color: #64748b;
+  font-weight: 800;
 }
 
 .panel-toolbar {
@@ -703,8 +738,8 @@ textarea {
 }
 
 .interview-list-table .table-row {
-  min-width: 1280px;
-  grid-template-columns: 190px 100px 180px 150px 110px 130px 300px;
+  min-width: 1620px;
+  grid-template-columns: 190px 100px 180px 150px 110px 170px 170px 130px 300px;
 }
 
 .role-table .table-row {
@@ -943,9 +978,19 @@ textarea {
 }
 
 .table-row .status-cell {
+  display: grid;
+  justify-items: start;
+  gap: 4px;
   overflow: visible;
   text-overflow: clip;
   white-space: normal;
+}
+
+.table-row .status-cell small {
+  display: block;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .switch-control {
@@ -1805,6 +1850,30 @@ textarea {
   min-height: 0;
 }
 
+.interview-invalid-panel {
+  display: grid;
+  gap: 8px;
+  align-content: center;
+  min-height: 220px;
+  padding: 24px;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fff1f2;
+  color: #991b1b;
+}
+
+.interview-invalid-panel b {
+  font-size: 18px;
+  line-height: 1.3;
+}
+
+.interview-invalid-panel span {
+  max-width: 520px;
+  color: #7f1d1d;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
 .interview-side-panel,
 .interview-main-panel {
   display: flex;
@@ -2204,9 +2273,16 @@ textarea {
     flex-direction: column;
   }
 
-  .query-grid label {
+  .interview-query-grid .query-actions {
+    grid-column: auto;
+    justify-content: flex-start;
+  }
+
+  .query-grid label,
+  .query-field {
     grid-template-columns: 1fr;
   }
+
 }
 
 @media (max-width: 560px) {
